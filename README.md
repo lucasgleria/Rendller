@@ -18,7 +18,7 @@ App web para controlar aportes em CDB e renda fixa: rendimento bruto e líquido,
 - Nenhuma taxa fica dentro do código de cálculo: tudo vem de Parâmetros.
 - Todo valor futuro é **estimativa** e aparece marcado como tal.
 
-O motor fica em `src/domain/` e é testado em `src/domain/calculo.test.ts` (casos da seção 10.3 do `CLAUDE.md`, conferidos contra um cálculo independente).
+O motor fica em `src/domain/` e é testado em `src/domain/calculo.test.ts` (casos da seção 6 do `CLAUDE.md`, conferidos contra um cálculo independente).
 
 ## Dados
 
