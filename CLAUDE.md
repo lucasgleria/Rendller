@@ -36,6 +36,10 @@ Antes de dizer que uma mudança está pronta, rode `npm test` e `npm run build`.
 | `src/armazenamento.ts` | Persistência em `localStorage` (chave `rendller:dados:v1`) e download de arquivos |
 | `src/servicos.ts` | Rede: API do Banco Central (CDI) e proxy `/anbima/*` (calendário) |
 | `src/cdiOnline.ts` | Hook que atualiza o CDI ao abrir o app (uma vez por dia) e sob demanda |
+| `src/domain/sincronia.ts` | O que sincroniza (`paraNuvem`), aplicação dos dados remotos (`daNuvem`), impressão digital |
+| `src/cofre.ts` | Criptografia da sincronização (PBKDF2 → HKDF → id, token, chave AES-GCM) e chamadas a `/api/cofre` |
+| `src/sincronizacao.ts` | Hook de sincronização: envio, busca, conflitos, ativação |
+| `netlify/cofre.ts`, `netlify/functions/cofre.mts` | Servidor do cofre (Netlify Function + Netlify Blobs); guarda só conteúdo cifrado |
 | `netlify.toml` | Build, proxy da ANBIMA e cabeçalhos do deploy no Netlify |
 | `src/pages/*.tsx` | Telas: Painel, Aportes, Instituições, Simulador, Parâmetros |
 | `src/components/campos.tsx` | Campos de formulário (números pt-BR, percentuais com `escala={100}`) |
@@ -47,8 +51,9 @@ Regras de arquitetura:
 - As telas só exibem e editam; não fazem conta financeira própria.
 - Datas são strings ISO `aaaa-mm-dd`. Use as funções de `datas.ts`, nunca `new Date()` para aritmética de dias.
 - Percentuais e taxas são guardados em decimal (103% do CDI = `1.03`; 12% a.a. = `0.12`).
-- Os dados ficam **só no navegador** (decisão do usuário em 04/10/2026). Mudanças no formato de `Dados` precisam continuar lendo backups e dados antigos: `normalizarParametros()` (em `padroes.ts`) mescla parâmetros novos com os padrões e migra dados antigos.
-- Rede só para dados públicos (CDI do Banco Central, calendário ANBIMA), nunca para enviar dados do usuário. Busca de rede fica fora de `src/domain/`; o domínio recebe os dados já baixados.
+- Os dados ficam no navegador (`localStorage`) e, se o usuário ativar, sincronizam entre aparelhos por um **cofre cifrado de ponta a ponta** (decisão do usuário em 04/10/2026, substituindo "só no navegador"). A frase-senha nunca sai do navegador; o servidor recebe só id, token e conteúdo AES-GCM. Sem a frase não há recuperação: o backup .json continua existindo. Mudanças no formato de `Dados` precisam continuar lendo backups, dados antigos e cofres já gravados: `normalizarParametros()` (em `padroes.ts`) mescla parâmetros novos com os padrões e migra dados antigos.
+- O histórico do CDI e, com `cdiAutomatico`, o CDI de projeção **não** sincronizam (são públicos e cada aparelho baixa os seus); assim a atualização diária do CDI não gera conflito. Conflito real (os dois lados mudaram) nunca sobrescreve sozinho: o usuário escolhe, e a versão local descartada fica em `rendller:copia-antes-da-nuvem`.
+- Rede só para dados públicos (CDI do Banco Central, calendário ANBIMA) e para o cofre cifrado. Dado do usuário nunca sai do navegador sem criptografia. Busca de rede fica fora de `src/domain/`; o domínio recebe os dados já baixados.
 
 ## 3. Regras de ouro
 
@@ -119,6 +124,7 @@ Qualquer mudança no motor precisa manter (e, se for regra nova, ganhar) testes 
 - [ ] Resgate parcial (divisão proporcional, contagem tributária mantida, soma das partes = lote original)
 - [ ] CDI realizado (dias com dado usam o CDI do dia, lacunas e futuro usam a projeção, fim de semana/feriado ignorados)
 - [ ] Calendário ANBIMA embutido = regra dos feriados nacionais (2001–2099); migração da lista antiga
+- [ ] Sincronização (`src/sincronizacao.test.ts`): criptografia, o que sincroniza, servidor (autorização, versão, gravação simultânea), dois aparelhos
 
 Os valores esperados foram conferidos por um cálculo independente (CDI 13,90% a.a., feriados nacionais). Valide valores novos por um segundo caminho antes de gravá-los no teste; não ajuste o esperado só para o teste passar. Checagens de sanidade: rendimento ≥ 0, líquido < bruto, IR na faixa certa, IOF zero a partir de 30 dias.
 
@@ -149,7 +155,7 @@ Os valores esperados foram conferidos por um cálculo independente (CDI 13,90% a
 - Fundir aportes de datas diferentes.
 - Apagar dados do usuário ou mudar o formato salvo sem manter compatibilidade com backups antigos.
 - Confundir corretora distribuidora com emissor do título.
-- Pedir senhas, tokens ou dados de acesso bancário.
+- Pedir senhas, tokens ou dados de acesso bancário. A frase-senha da sincronização é digitada só no app; nunca peça, registre ou envie a frase (nem a chave derivada) para lugar nenhum.
 
 ## 10. Contexto do projeto (histórico, não regra)
 

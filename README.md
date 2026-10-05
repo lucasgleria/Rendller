@@ -23,6 +23,8 @@ O motor fica em `src/domain/` e é testado em `src/domain/calculo.test.ts` (caso
 
 ## Dados
 
+**Sincronização entre aparelhos** (*Parâmetros → Sincronização*): você escolhe uma frase-senha; os dados são criptografados no navegador (AES-GCM, chave derivada da frase por PBKDF2 com 600 mil iterações) e guardados no Netlify Blobs por uma função do próprio site (`/api/cofre`). O servidor só vê conteúdo ilegível. Em outro aparelho, digite a mesma frase. Se esquecer a frase, os dados da nuvem não podem ser recuperados: mantenha um backup `.json`.
+
 Os dados ficam **só no navegador** (localStorage). Use *Parâmetros → Exportar backup* para guardar um arquivo `.json` ou levar a outro aparelho.
 
 O app só faz duas consultas externas, ambas a dados públicos e sem enviar nada seu: o CDI na API do Banco Central (`api.bcb.gov.br`) e a data do calendário de feriados da ANBIMA (por um proxy do próprio domínio, porque o site da ANBIMA não aceita acesso direto do navegador).

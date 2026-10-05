@@ -175,3 +175,8 @@ legend { font-weight: 650; margin-bottom: 10px; padding: 0; }
 .recharts-text { fill: var(--muted); font-size: 12px; }
 .recharts-cartesian-grid line { stroke: var(--border); }
 .tooltip { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 13px; box-shadow: var(--shadow); }
+
+/* Indicador de sincronização no cabeçalho */
+.sync-estado { border: 1px solid var(--border); background: var(--surface); color: var(--muted); font-size: 12px; padding: 3px 10px; border-radius: 999px; cursor: pointer; white-space: nowrap; }
+.sync-estado.s-sincronizado { color: var(--pos); }
+.sync-estado.s-conflito, .sync-estado.s-erro { color: var(--neg); border-color: var(--neg); }
