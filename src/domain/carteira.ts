@@ -165,7 +165,7 @@ export function agruparPorInstituicao(linhas: Linha[], p: Parametros): Grupo[] {
   const grupos = [...mapa.values()];
   const total = grupos.reduce((s, g) => s + g.brutoHoje, 0);
   for (const g of grupos) {
-    // FGC cobre principal + rendimentos, por CPF e por conglomerado (CLAUDE.md 7).
+    // FGC cobre principal + rendimentos, por CPF e por conglomerado (CLAUDE.md seção 5).
     g.exposicaoFgc = g.brutoHoje;
     g.coberturaFgc = Math.min(g.exposicaoFgc, p.fgcLimitePorInstituicao);
     g.excessoFgc = Math.max(0, g.exposicaoFgc - p.fgcLimitePorInstituicao);

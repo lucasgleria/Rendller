@@ -4,7 +4,7 @@ const brl = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' 
 const brlCurto = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', notation: 'compact', maximumFractionDigits: 1 });
 const num = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 });
 
-/** Arredonda só na exibição (CLAUDE.md 5.7). */
+/** Arredonda só na exibição (CLAUDE.md seção 4). */
 export const moeda = (v: number) => brl.format(v);
 export const moedaCurta = (v: number) => brlCurto.format(v);
 export const numero = (v: number) => num.format(v);

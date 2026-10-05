@@ -46,7 +46,7 @@ describe('impostos', () => {
   });
 });
 
-describe('casos obrigatórios (CLAUDE.md 10.3)', () => {
+describe('casos obrigatórios (CLAUDE.md seção 6)', () => {
   it('CDB taxa única 110% por 365 dias', () => {
     const r = avaliar(cdb({ pctCdi: 1.1, vencimento: venc(365) }), venc(365), p, cal);
     expect(r.bruto).toBeCloseTo(1152.61, 2);

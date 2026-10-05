@@ -3,7 +3,7 @@ import type { Aporte, ISODate, Parametros } from './types';
 
 /**
  * Resultado de um lote avaliado numa data.
- * Ordem dos impostos (CLAUDE.md 5.5): bruto → IOF → base IR = rendimento − IOF → IR → líquido.
+ * Ordem dos impostos (CLAUDE.md seção 4): bruto → IOF → base IR = rendimento − IOF → IR → líquido.
  */
 export interface Avaliacao {
   data: ISODate; // data efetiva da avaliação (limitada ao vencimento)

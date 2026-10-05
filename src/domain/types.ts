@@ -27,7 +27,7 @@ export interface Divisao {
   fracao: number; // fração do principal original que ficou nesta linha
 }
 
-/** Um aporte = um lote independente (CLAUDE.md 0.2 e 9.1). */
+/** Um aporte = um lote independente (CLAUDE.md seção 3, regra 2). */
 export interface Aporte {
   id: string;
   // Identificação
