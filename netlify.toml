@@ -1,0 +1,29 @@
+# Deploy no Netlify: testes do motor e build a cada publicação.
+[build]
+  command = "npm test && npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+# O site da ANBIMA não libera acesso direto do navegador (sem CORS). Este proxy do próprio domínio
+# permite conferir e baixar o calendário de feriados. O mesmo caminho existe no servidor de
+# desenvolvimento (vite.config.ts).
+[[redirects]]
+  from = "/anbima/*"
+  to = "https://www.anbima.com.br/feriados/arqs/:splat"
+  status = 200
+  force = true
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "no-referrer"
+    X-Frame-Options = "DENY"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"

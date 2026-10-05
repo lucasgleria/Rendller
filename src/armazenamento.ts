@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { dadosVazios, parametrosPadrao } from './domain/padroes';
+import { dadosVazios, normalizarParametros } from './domain/padroes';
 import type { Dados } from './domain/types';
 
 const CHAVE = 'rendller:dados:v1';
@@ -10,7 +10,7 @@ function carregar(): Dados {
     if (!bruto) return dadosVazios();
     const d = JSON.parse(bruto) as Dados;
     // Parâmetros novos ganham o valor padrão sem perder o que o usuário já configurou.
-    return { ...d, parametros: { ...parametrosPadrao(), ...d.parametros } };
+    return { ...d, parametros: normalizarParametros(d.parametros) };
   } catch {
     return dadosVazios();
   }

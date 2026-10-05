@@ -56,6 +56,12 @@ export class Calendario {
     if (b <= a) return 0;
     return diasDeSemana(a, b) - (indiceInferior(this.feriados, b) - indiceInferior(this.feriados, a));
   }
+
+  ehDiaUtil(iso: ISODate): boolean {
+    if (!isISODate(iso)) return false;
+    const n = diaNum(iso);
+    return !ehFimDeSemana(n) && this.feriados[indiceInferior(this.feriados, n)] !== n;
+  }
 }
 
 // 1970-01-01 foi quinta-feira: (n + 4) % 7 → 0 = domingo … 6 = sábado.
@@ -78,7 +84,7 @@ function diasDeSemana(a: number, b: number): number {
 }
 
 /** Primeiro índice i com arr[i] >= v. */
-function indiceInferior(arr: number[], v: number): number {
+export function indiceInferior(arr: number[], v: number): number {
   let lo = 0;
   let hi = arr.length;
   while (lo < hi) {
@@ -110,7 +116,7 @@ export function pascoa(ano: number): ISODate {
 
 /**
  * Feriados nacionais (fixos + Carnaval, Sexta-feira Santa e Corpus Christi).
- * É uma lista inicial editável; conferir com o calendário ANBIMA.
+ * Serve de conferência do calendário ANBIMA (`feriadosAnbima.ts`): as duas listas coincidem de 2001 a 2099.
  */
 export function feriadosNacionais(anoInicial: number, anoFinal: number): ISODate[] {
   const fixos = ['01-01', '04-21', '05-01', '09-07', '10-12', '11-02', '11-15', '11-20', '12-25'];
