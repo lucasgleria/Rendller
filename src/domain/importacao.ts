@@ -1,6 +1,6 @@
-import { isISODate } from './datas';
+import { deDiaNum, isISODate } from './datas';
 import { novoAporte } from './padroes';
-import type { Aporte, Dados, Liquidez } from './types';
+import type { Aporte, Dados, ISODate, Liquidez } from './types';
 
 type Celula = unknown;
 
@@ -107,6 +107,26 @@ export function importarCdi(linhas: Celula[][]): number | null {
     if (texto(l[0]).toLowerCase().startsWith('cdi anual')) return numero(l[1]);
   }
   return null;
+}
+
+/** Dias entre 1899-12-30 (dia 0 das datas seriais do Excel) e 1970-01-01. */
+const EXCEL_EPOCA = 25569;
+
+/**
+ * Lê o arquivo `feriados_nacionais.xls` da ANBIMA (colunas Data · Dia da Semana · Feriado).
+ * Aceita datas como número serial do Excel, Date ou texto dd/mm/aaaa; rodapé e linhas sem data são ignorados.
+ */
+export function lerFeriadosAnbima(linhas: Celula[][]): ISODate[] {
+  const iCab = linhas.findIndex((l) => texto(l[0]).toLowerCase() === 'data' && l.some((c) => texto(c).toLowerCase() === 'feriado'));
+  if (iCab < 0) throw new Error('Arquivo não parece ser o calendário da ANBIMA (cabeçalho "Data" e "Feriado" não encontrado).');
+  const datas = new Set<ISODate>();
+  for (const l of linhas.slice(iCab + 1)) {
+    const c = l[0];
+    const d = typeof c === 'number' && Number.isInteger(c) && c > 0 ? deDiaNum(c - EXCEL_EPOCA) : paraISO(c);
+    if (isISODate(d) && texto(l[2])) datas.add(d);
+  }
+  if (datas.size < 100) throw new Error(`Só ${datas.size} feriado(s) encontrados: o arquivo parece incompleto.`);
+  return [...datas].sort();
 }
 
 export function validarBackup(obj: unknown): Dados {

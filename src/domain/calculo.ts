@@ -1,3 +1,4 @@
+import { historicoCdi, taxaDiaria } from './cdi';
 import { Calendario, diasCorridos, minData, somaDias } from './datas';
 import type { Aporte, ISODate, Parametros } from './types';
 
@@ -9,6 +10,8 @@ export interface Avaliacao {
   data: ISODate; // data efetiva da avaliação (limitada ao vencimento)
   diasUteis: number; // usados no rendimento
   diasCorridos: number; // usados no IR e IOF
+  /** Dias úteis sem dado realizado (CDI de projeção, IPCA projetado). 0 = valor calculado só com fatos. */
+  diasUteisEstimados: number;
   bruto: number;
   rendimentoBruto: number;
   pctIof: number;
@@ -37,9 +40,7 @@ export function percentualIOF(diasCorridos: number, p: Parametros): number {
   return p.tabelaIOF[diasCorridos - 1] ?? 0;
 }
 
-export function taxaDiariaCDI(cdiAnual: number, p: Parametros): number {
-  return Math.pow(1 + cdiAnual, 1 / p.diasUteisAno) - 1;
-}
+export const taxaDiariaCDI = taxaDiaria;
 
 /** Fim da fase promocional (exclusivo): início + dias de promoção. */
 export function fimPromocao(a: Aporte): ISODate | null {
@@ -50,36 +51,41 @@ export function fimPromocao(a: Aporte): ISODate | null {
 /**
  * Fator de rendimento bruto entre o aporte e `fim`.
  * Pós-fixado com fases: cada fase com seus próprios dias úteis, fatores multiplicados (nunca média).
+ * Dias úteis com CDI realizado (`Parametros.cdiDiario`) usam o CDI do dia; os demais, o CDI de projeção.
  */
-export function fatorBruto(a: Aporte, fim: ISODate, p: Parametros, cal: Calendario): { fator: number; du: number; ok: boolean } {
+export function fatorBruto(a: Aporte, fim: ISODate, p: Parametros, cal: Calendario): { fator: number; du: number; estimados: number; ok: boolean } {
   const inicio = a.dataAporte;
   const du = cal.diasUteis(inicio, fim);
-  if (du === 0) return { fator: 1, du: 0, ok: true };
+  if (du === 0) return { fator: 1, du: 0, estimados: 0, ok: true };
 
   if (a.indexador === 'CDI') {
     const td = taxaDiariaCDI(a.cdiProjecao ?? p.cdiAnual, p);
+    const h = historicoCdi(p, cal);
+    const fase = (de: ISODate, ate: ISODate, pct: number) => {
+      const reais = h.diasReais(de, ate);
+      const projetados = cal.diasUteis(de, ate) - reais;
+      return { fator: h.fatorReal(de, ate, pct) * Math.pow(1 + td * pct, projetados), projetados };
+    };
     const fp = fimPromocao(a);
     const corte = fp ? minData(fim, fp) : inicio;
-    const du1 = fp ? cal.diasUteis(inicio, corte) : 0;
-    const du2 = cal.diasUteis(corte, fim);
-    const f1 = fp ? Math.pow(1 + td * (a.pctCdiPromo as number), du1) : 1;
-    const f2 = Math.pow(1 + td * a.pctCdi, du2);
-    return { fator: f1 * f2, du, ok: true };
+    const f1 = fp ? fase(inicio, corte, a.pctCdiPromo as number) : { fator: 1, projetados: 0 };
+    const f2 = fase(corte, fim, a.pctCdi);
+    return { fator: f1.fator * f2.fator, du, estimados: f1.projetados + f2.projetados, ok: true };
   }
   if (a.indexador === 'PRE') {
-    if (a.taxaPre == null) return { fator: 1, du, ok: false };
-    return { fator: Math.pow(1 + a.taxaPre, du / p.diasUteisAno), du, ok: true };
+    if (a.taxaPre == null) return { fator: 1, du, estimados: 0, ok: false };
+    return { fator: Math.pow(1 + a.taxaPre, du / p.diasUteisAno), du, estimados: 0, ok: true };
   }
   // IPCA + spread: IPCA futuro é sempre estimativa.
-  if (a.spreadIpca == null || p.ipcaProjetado == null) return { fator: 1, du, ok: false };
+  if (a.spreadIpca == null || p.ipcaProjetado == null) return { fator: 1, du, estimados: du, ok: false };
   const anos = du / p.diasUteisAno;
-  return { fator: Math.pow(1 + p.ipcaProjetado, anos) * Math.pow(1 + a.spreadIpca, anos), du, ok: true };
+  return { fator: Math.pow(1 + p.ipcaProjetado, anos) * Math.pow(1 + a.spreadIpca, anos), du, estimados: du, ok: true };
 }
 
 /** Avalia o lote em `data` (projeção). A data é limitada ao intervalo [aporte, vencimento]. */
 export function avaliar(a: Aporte, data: ISODate, p: Parametros, cal: Calendario): Avaliacao {
   const fim = data < a.dataAporte ? a.dataAporte : minData(data, a.vencimento);
-  const { fator, du, ok } = fatorBruto(a, fim, p, cal);
+  const { fator, du, estimados, ok } = fatorBruto(a, fim, p, cal);
   const dc = diasCorridos(a.dataAporte, fim);
   const bruto = a.valor * fator;
   const rendimentoBruto = Math.max(0, bruto - a.valor);
@@ -94,6 +100,7 @@ export function avaliar(a: Aporte, data: ISODate, p: Parametros, cal: Calendario
     data: fim,
     diasUteis: du,
     diasCorridos: dc,
+    diasUteisEstimados: estimados,
     bruto,
     rendimentoBruto,
     pctIof,

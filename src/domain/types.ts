@@ -61,15 +61,28 @@ export interface Aporte {
   divisao?: Divisao | null;
 }
 
+/** CDI de um dia útil, como publicado pelo Banco Central (taxa anualizada, base 252, em decimal). */
+export interface CdiDia {
+  data: ISODate;
+  anual: number;
+}
+
 export interface FaixaIR {
   aPartirDeDias: number; // dias corridos
   aliquota: number;
 }
 
 export interface Parametros {
+  /** CDI de projeção: usado nos dias úteis sem CDI realizado em `cdiDiario` (o futuro e eventuais lacunas). */
   cdiAnual: number;
   cdiData: ISODate | '';
   cdiFonte: string;
+  /** true = o CDI de projeção acompanha o último CDI publicado pelo Banco Central. */
+  cdiAutomatico: boolean;
+  /** CDI realizado dia a dia (Banco Central, SGS 4389). Vazio = tudo é projeção. */
+  cdiDiario: CdiDia[];
+  /** Última consulta bem-sucedida ao Banco Central. */
+  cdiAtualizadoEm: ISODate | '';
   /** null = não informado; aportes IPCA+ ficam sem projeção até ser preenchido. */
   ipcaProjetado: number | null;
   ipcaData: ISODate | '';
@@ -84,6 +97,9 @@ export interface Parametros {
   fgcAlertaFracao: number;
   alertaVencimentoDias: [number, number];
   feriados: ISODate[];
+  feriadosFonte: string;
+  /** Data do arquivo ANBIMA de onde veio a lista ('' = lista editada ou de outra origem). */
+  feriadosVersao: ISODate | '';
   premissasVersao: string;
   premissasFonte: string;
 }

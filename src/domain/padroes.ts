@@ -1,9 +1,11 @@
 import { feriadosNacionais } from './datas';
+import { CALENDARIO_ANBIMA } from './feriadosAnbima';
 import type { Aporte, Dados, Parametros } from './types';
 
 /**
- * Premissas iniciais (CLAUDE.md seções 4.5, 6 e 7, revisadas em outubro/2026).
- * CDI inicial = valor que estava na planilha (13,90%), sem data/fonte: o usuário precisa confirmar o vigente.
+ * Premissas iniciais (CLAUDE.md seções 4 e 5, revisadas em outubro/2026).
+ * CDI inicial = valor que estava na planilha (13,90%), sem data/fonte. Com `cdiAutomatico`, o app o troca
+ * pelo último CDI do Banco Central na primeira consulta bem-sucedida.
  * IPCA projetado começa vazio: é estimativa e precisa ser informada.
  */
 export function parametrosPadrao(): Parametros {
@@ -11,6 +13,9 @@ export function parametrosPadrao(): Parametros {
     cdiAnual: 0.139,
     cdiData: '',
     cdiFonte: '',
+    cdiAutomatico: true,
+    cdiDiario: [],
+    cdiAtualizadoEm: '',
     ipcaProjetado: null,
     ipcaData: '',
     ipcaFonte: '',
@@ -29,10 +34,35 @@ export function parametrosPadrao(): Parametros {
     fgcLimiteGlobal4Anos: 1_000_000,
     fgcAlertaFracao: 0.8,
     alertaVencimentoDias: [30, 90],
-    feriados: feriadosNacionais(2020, 2040),
+    feriados: [...CALENDARIO_ANBIMA.feriados],
+    feriadosFonte: CALENDARIO_ANBIMA.fonte,
+    feriadosVersao: CALENDARIO_ANBIMA.versao,
     premissasVersao: 'outubro/2026',
     premissasFonte: 'Receita Federal (IR renda fixa 2026), Portal do Investidor/CVM (IOF), FGC (garantia ordinária)',
   };
+}
+
+/**
+ * Parâmetros salvos (localStorage ou backup) completados com os padrões, sem perder o que o usuário configurou.
+ * Dados anteriores ao calendário ANBIMA que ainda usam a lista gerada antiga (2020–2040, sem edição) passam
+ * para a lista ANBIMA completa; uma lista editada pelo usuário é mantida.
+ */
+export function normalizarParametros(salvo: Partial<Parametros> | undefined): Parametros {
+  const p: Parametros = { ...parametrosPadrao(), ...salvo };
+  if (!Array.isArray(p.cdiDiario)) p.cdiDiario = [];
+  if (salvo && salvo.feriadosFonte === undefined) {
+    const antiga = feriadosNacionais(2020, 2040);
+    const igual = Array.isArray(salvo.feriados) && salvo.feriados.length === antiga.length && salvo.feriados.every((d, i) => d === antiga[i]);
+    if (igual) {
+      p.feriados = [...CALENDARIO_ANBIMA.feriados];
+      p.feriadosFonte = CALENDARIO_ANBIMA.fonte;
+      p.feriadosVersao = CALENDARIO_ANBIMA.versao;
+    } else {
+      p.feriadosFonte = 'Lista editada pelo usuário';
+      p.feriadosVersao = '';
+    }
+  }
+  return p;
 }
 
 export function dadosVazios(): Dados {

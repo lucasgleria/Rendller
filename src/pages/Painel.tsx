@@ -1,6 +1,8 @@
 import { Area, AreaChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { Pagina } from '../App';
-import { agruparPorInstituicao, resumir, serieProjecao, type Linha } from '../domain/carteira';
+import type { EstadoCdi } from '../cdiOnline';
+import { ultimoCdi } from '../domain/cdi';
+import { agruparPorInstituicao, contaNoSaldo, resumir, serieProjecao, type Linha } from '../domain/carteira';
 import type { Parametros } from '../domain/types';
 import { data, mesAno, moeda, moedaCurta, pct } from '../formato';
 
@@ -9,9 +11,10 @@ interface Props {
   parametros: Parametros;
   hoje: string;
   ir: (p: Pagina) => void;
+  estadoCdi: EstadoCdi;
 }
 
-export default function Painel({ linhas, parametros: p, hoje, ir }: Props) {
+export default function Painel({ linhas, parametros: p, hoje, ir, estadoCdi }: Props) {
   if (!linhas.length) {
     return (
       <div className="card vazio">
@@ -39,6 +42,9 @@ export default function Painel({ linhas, parametros: p, hoje, ir }: Props) {
     .slice(0, 5);
   const [j1, j2] = p.alertaVencimentoDias;
   const semDataCdi = !p.cdiData;
+  const cdiReal = ultimoCdi(p.cdiDiario);
+  // "hoje" só é estimativa quando algum dia útil decorrido ficou sem CDI realizado (ou o lote é IPCA+)
+  const hojeEstimado = linhas.filter(contaNoSaldo).some((l) => l.hoje.diasUteisEstimados > 0);
 
   return (
     <>
@@ -46,10 +52,12 @@ export default function Painel({ linhas, parametros: p, hoje, ir }: Props) {
         <div>
           <h1>Painel da carteira</h1>
           <p className="sub">
-            Posição em {data(hoje)} · CDI de projeção {pct(p.cdiAnual)} {p.cdiData ? `(${data(p.cdiData)})` : ''}
+            Posição em {data(hoje)} · {cdiReal ? <>CDI realizado até {data(cdiReal.data)} (Banco Central) · </> : null}CDI de projeção {pct(p.cdiAnual)}{' '}
+            {p.cdiData ? `(${data(p.cdiData)})` : ''}
           </p>
         </div>
       </div>
+      {estadoCdi.erro && <div className="aviso amarelo">{estadoCdi.erro}</div>}
       {semDataCdi && (
         <div className="aviso amarelo">
           O CDI de projeção ({pct(p.cdiAnual)}) está sem data e fonte. Confirme o valor vigente em{' '}
@@ -62,14 +70,14 @@ export default function Painel({ linhas, parametros: p, hoje, ir }: Props) {
 
       <div className="grade kpis">
         <Kpi rotulo="Total aportado" valor={moeda(r.aportado)} det={`${r.ativos} aporte${r.ativos === 1 ? '' : 's'} ativo${r.ativos === 1 ? '' : 's'}`} />
-        <Kpi rotulo="Saldo bruto hoje" valor={moeda(r.brutoHoje)} det={`Rendimento bruto ${moeda(r.rendimentoBrutoHoje)}`} estimativa />
-        <Kpi rotulo="Impostos se resgatar hoje" valor={moeda(r.impostosHoje)} det="IR + IOF estimados" estimativa />
+        <Kpi rotulo="Saldo bruto hoje" valor={moeda(r.brutoHoje)} det={`Rendimento bruto ${moeda(r.rendimentoBrutoHoje)}`} estimativa={hojeEstimado} />
+        <Kpi rotulo="Impostos se resgatar hoje" valor={moeda(r.impostosHoje)} det={hojeEstimado ? 'IR + IOF estimados' : 'IR + IOF calculados com o CDI realizado'} estimativa={hojeEstimado} />
         <Kpi
           rotulo="Saldo líquido hoje"
           valor={moeda(r.liquidoHoje)}
           det={<span>Rendimento líquido {moeda(r.rendimentoLiquidoHoje)}</span>}
           destaque
-          estimativa
+          estimativa={hojeEstimado}
         />
         <Kpi
           rotulo="Líquido no vencimento"

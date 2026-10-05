@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { aliquotaIR, avaliar, percentualIOF, resgatarParcial, type ResgateParcial } from './calculo';
 import { agruparPorInstituicao, montarLinhas, resumir } from './carteira';
+import { inicioConsulta, lerSerieBcb, mesclarCdi, ultimoCdi } from './cdi';
 import { Calendario, feriadosNacionais, somaDias } from './datas';
-import { novoAporte, parametrosPadrao } from './padroes';
-import type { Aporte } from './types';
+import { CALENDARIO_ANBIMA } from './feriadosAnbima';
+import { lerFeriadosAnbima } from './importacao';
+import { normalizarParametros, novoAporte, parametrosPadrao } from './padroes';
+import type { Aporte, CdiDia, Parametros } from './types';
 
 // Valores de referência calculados de forma independente (script Python da auditoria de 04/10/2026),
 // com CDI 13,90% a.a., 252 dias úteis e feriados nacionais.
@@ -208,5 +211,137 @@ describe('resgate parcial', () => {
     const res = resumir(montarLinhas([r.resgatado, r.remanescente], '2026-10-05', p), p);
     expect(res.aportado).toBeCloseTo(303.95, 2);
     expect(res.resgatadoLiquido).toBeCloseTo(199.11, 2);
+  });
+});
+
+describe('CDI realizado (Banco Central)', () => {
+  // Histórico sintético: 13,65% em setembro/2026, 15% de 15 a 18/09, sem 22/09 (lacuna). Projeção 13,90%.
+  // Referências de um laço dia a dia independente do motor (datas do JavaScript + arquivo ANBIMA).
+  const serie: CdiDia[] = [];
+  for (let d = '2026-09-01'; d <= '2026-09-30'; d = somaDias(d, 1)) {
+    if (d === '2026-09-22') continue;
+    serie.push({ data: d, anual: d >= '2026-09-15' && d <= '2026-09-18' ? 0.15 : 0.1365 });
+  }
+  const ph = { ...p, cdiDiario: serie };
+  const a = cdb({ dataAporte: '2026-09-01', valor: 1000, pctCdi: 1.03, pctCdiPromo: 1.3, diasPromo: 30, vencimento: '2028-08-10' });
+
+  it('usa o CDI de cada dia e projeta só os dias sem dado', () => {
+    const r = avaliar(a, '2026-09-30', ph, cal);
+    expect(r.diasUteis).toBe(20);
+    expect(r.diasUteisEstimados).toBe(1); // a lacuna de 22/09
+    expect(r.bruto).toBeCloseTo(1013.546429, 6);
+    expect(r.iof).toBeCloseTo(0.406393, 6);
+    expect(r.ir).toBeCloseTo(2.956508, 6);
+    expect(r.liquido).toBeCloseTo(1010.183528, 6);
+  });
+  it('depois do último CDI publicado volta à projeção', () => {
+    const r = avaliar(a, '2026-10-05', ph, cal);
+    expect(r.diasUteisEstimados).toBe(3);
+    expect(r.bruto).toBeCloseTo(1015.295238, 6);
+    expect(r.liquido).toBeCloseTo(1011.853809, 6);
+    const v = avaliar(a, '2028-08-10', ph, cal);
+    expect(v.diasUteis).toBe(486);
+    expect(v.diasUteisEstimados).toBe(466);
+    expect(v.bruto).toBeCloseTo(1298.847559, 6);
+    expect(v.liquido).toBeCloseTo(1246.549236, 6);
+  });
+  it('lote sem fase promocional, com IOF', () => {
+    const r = avaliar(cdb({ dataAporte: '2026-09-10', valor: 500, pctCdi: 1.085, vencimento: '2030-10-01' }), '2026-10-01', ph, cal);
+    expect(r.diasUteis).toBe(15);
+    expect(r.bruto).toBeCloseTo(504.256162, 6);
+    expect(r.iof).toBeCloseTo(1.276848, 6);
+    expect(r.liquido).toBeCloseTo(502.308968, 6);
+  });
+  it('ignora fim de semana e feriado no histórico e não mexe em prefixado', () => {
+    const extra = { ...ph, cdiDiario: [...serie, { data: '2026-09-05', anual: 0.5 }, { data: '2026-09-07', anual: 0.5 }] };
+    expect(avaliar(a, '2026-09-30', extra, cal).bruto).toBeCloseTo(1013.546429, 6);
+    const pre = cdb({ indexador: 'PRE', taxaPre: 0.12, vencimento: venc(365) });
+    expect(avaliar(pre, venc(365), ph, cal).bruto).toBe(avaliar(pre, venc(365), p, cal).bruto);
+    expect(avaliar(pre, venc(365), ph, cal).diasUteisEstimados).toBe(0);
+  });
+  it('sem histórico tudo é projeção', () => {
+    const r = avaliar(a, '2026-09-30', p, cal);
+    expect(r.diasUteisEstimados).toBe(r.diasUteis);
+  });
+  it('resgate parcial com CDI realizado mantém a soma das partes', () => {
+    const lote = { ...a, id: 'l1' };
+    const r = resgatarParcial(lote, '2026-10-05', 300, 'bruto', ph, cal, 'l2');
+    if ('erro' in r) throw new Error(r.erro);
+    for (const d of ['2026-10-05', '2027-06-01', '2028-08-10']) {
+      const o = avaliar(lote, d, ph, cal);
+      expect(avaliar(r.resgatado, d, ph, cal).liquido + avaliar(r.remanescente, d, ph, cal).liquido).toBeCloseTo(o.liquido, 9);
+    }
+  });
+});
+
+describe('série do Banco Central', () => {
+  it('lê o JSON do SGS e mescla com revisão', () => {
+    const s = lerSerieBcb([
+      { data: '30/09/2026', valor: '13.65' },
+      { data: '01/10/2026', valor: '13.65' },
+      { data: 'x', valor: '1' },
+      { data: '02/10/2026', valor: '' },
+    ]);
+    expect(s).toEqual([
+      { data: '2026-09-30', anual: 0.1365 },
+      { data: '2026-10-01', anual: 0.1365 },
+    ]);
+    const m = mesclarCdi(s, [
+      { data: '2026-10-01', anual: 0.137 },
+      { data: '2026-09-29', anual: 0.1365 },
+    ]);
+    expect(m.map((c) => c.data)).toEqual(['2026-09-29', '2026-09-30', '2026-10-01']);
+    expect(ultimoCdi(m)).toEqual({ data: '2026-10-01', anual: 0.137 });
+    expect(() => lerSerieBcb({ erro: 1 })).toThrow();
+  });
+  it('consulta desde o aporte mais antigo ou só os dias recentes', () => {
+    expect(inicioConsulta([], '2026-08-19', '2026-10-04', 10)).toBe('2026-08-19');
+    const s = [
+      { data: '2026-08-19', anual: 0.1365 },
+      { data: '2026-10-01', anual: 0.1365 },
+    ];
+    expect(inicioConsulta(s, '2026-08-19', '2026-10-04', 10)).toBe('2026-09-21');
+    expect(inicioConsulta(s, '2026-01-02', '2026-10-04', 10)).toBe('2026-01-02'); // aporte mais antigo que o histórico
+    expect(inicioConsulta([], null, '2026-10-04', 10)).toBe('2026-09-24');
+  });
+});
+
+describe('calendário ANBIMA', () => {
+  it('lista embutida coincide com a regra dos feriados nacionais de 2001 a 2099', () => {
+    // em 2079 Tiradentes cai na Sexta-feira Santa: a data aparece uma vez só
+    expect(CALENDARIO_ANBIMA.feriados).toEqual([...new Set(feriadosNacionais(2001, 2099))]);
+    expect(CALENDARIO_ANBIMA.feriados.length).toBe(1263);
+    expect(parametrosPadrao().feriados).toEqual(CALENDARIO_ANBIMA.feriados);
+  });
+  it('dia útil considera fim de semana e feriado', () => {
+    expect(cal.ehDiaUtil('2026-10-12')).toBe(false); // Nossa Senhora Aparecida
+    expect(cal.ehDiaUtil('2026-10-10')).toBe(false); // sábado
+    expect(cal.ehDiaUtil('2026-10-13')).toBe(true);
+    expect(cal.ehDiaUtil('')).toBe(false);
+  });
+  it('lê o arquivo da ANBIMA com datas seriais do Excel', () => {
+    const linhas: unknown[][] = [['Data', 'Dia da Semana', 'Feriado']];
+    // 36892 = 01/01/2001 no Excel (primeira linha do arquivo original)
+    for (let i = 0; i < 120; i++) linhas.push([36892 + i, '', `Feriado ${i}`]);
+    linhas.push(['Fonte: ANBIMA'], [], ['4) Esta listagem não inclui os feriados municipais']);
+    const f = lerFeriadosAnbima(linhas);
+    expect(f.length).toBe(120);
+    expect(f[0]).toBe('2001-01-01');
+    expect(f[59]).toBe('2001-03-01');
+    expect(() => lerFeriadosAnbima([['qualquer coisa']])).toThrow(/ANBIMA/);
+    expect(() => lerFeriadosAnbima([['Data', 'Dia', 'Feriado'], [36892, '', 'x']])).toThrow(/incompleto/);
+  });
+  it('migra a lista gerada antiga para a ANBIMA e preserva lista editada', () => {
+    const antiga: Partial<Parametros> = { ...parametrosPadrao(), feriados: feriadosNacionais(2020, 2040) };
+    delete antiga.feriadosFonte;
+    delete antiga.feriadosVersao;
+    delete antiga.cdiDiario;
+    const m = normalizarParametros(antiga);
+    expect(m.feriados).toEqual(CALENDARIO_ANBIMA.feriados);
+    expect(m.feriadosVersao).toBe(CALENDARIO_ANBIMA.versao);
+    expect(m.cdiDiario).toEqual([]);
+    const editada = normalizarParametros({ ...antiga, feriados: ['2026-01-01'] });
+    expect(editada.feriados).toEqual(['2026-01-01']);
+    expect(editada.feriadosVersao).toBe('');
   });
 });

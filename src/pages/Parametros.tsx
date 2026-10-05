@@ -1,23 +1,59 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { baixarArquivo } from '../armazenamento';
-import { CampoData, CampoNumero, CampoTexto } from '../components/campos';
+import type { EstadoCdi } from '../cdiOnline';
+import { CampoCheck, CampoData, CampoNumero, CampoTexto } from '../components/campos';
+import { ultimoCdi } from '../domain/cdi';
 import { isISODate } from '../domain/datas';
+import { CALENDARIO_ANBIMA } from '../domain/feriadosAnbima';
 import { importarAportes, importarCdi, paraISO, validarBackup } from '../domain/importacao';
-import { dadosVazios, parametrosPadrao } from '../domain/padroes';
-import type { Dados, Parametros as P } from '../domain/types';
+import { dadosVazios, normalizarParametros } from '../domain/padroes';
+import type { Dados, ISODate, Parametros as P } from '../domain/types';
 import { data, moeda, pct } from '../formato';
+import { baixarCalendarioAnbima, lerArquivoAnbima, versaoAnbimaPublicada } from '../servicos';
 
 interface Props {
   dados: Dados;
   atualizar: (f: (d: Dados) => Dados) => void;
   substituir: (d: Dados) => void;
+  hoje: ISODate;
+  estadoCdi: EstadoCdi;
+  atualizarCdi: () => Promise<void>;
 }
 
-export default function Parametros({ dados, atualizar, substituir }: Props) {
+export default function Parametros({ dados, atualizar, substituir, hoje, estadoCdi, atualizarCdi }: Props) {
   const p = dados.parametros;
   const setP = (parcial: Partial<P>) => atualizar((d) => ({ ...d, parametros: { ...d.parametros, ...parcial } }));
   const [msg, setMsg] = useState<{ tipo: 'azul' | 'vermelho'; texto: string } | null>(null);
   const [feriadosTexto, setFeriadosTexto] = useState(() => p.feriados.map(data).join('\n'));
+  const cdiReal = ultimoCdi(p.cdiDiario);
+  // Conferência do calendário ANBIMA: compara a data do arquivo publicado com a da lista em uso.
+  const [anbimaPublicada, setAnbimaPublicada] = useState<ISODate | null | undefined>(undefined);
+  useEffect(() => {
+    let vivo = true;
+    versaoAnbimaPublicada().then((v) => vivo && setAnbimaPublicada(v));
+    return () => {
+      vivo = false;
+    };
+  }, []);
+  const anbimaNova = !!anbimaPublicada && (!p.feriadosVersao || anbimaPublicada > p.feriadosVersao);
+
+  const aplicarFeriados = (lista: ISODate[], fonte: string, versao: ISODate | '') => {
+    setP({ feriados: lista, feriadosFonte: fonte, feriadosVersao: versao });
+    setFeriadosTexto(lista.map(data).join('\n'));
+  };
+
+  const importarAnbima = async (origem: 'site' | File) => {
+    try {
+      const lista = origem === 'site' ? await baixarCalendarioAnbima() : await lerArquivoAnbima(origem);
+      const versao = origem === 'site' && anbimaPublicada ? anbimaPublicada : hoje;
+      const anos = `${lista[0].slice(0, 4)} a ${lista[lista.length - 1].slice(0, 4)}`;
+      if (!confirm(`Substituir os ${p.feriados.length} feriados em uso pelos ${lista.length} do calendário ANBIMA (${anos})?`)) return;
+      aplicarFeriados(lista, `ANBIMA, feriados nacionais (arquivo de ${data(versao)})`, versao);
+      setMsg({ tipo: 'azul', texto: `Calendário ANBIMA aplicado: ${lista.length} feriados.` });
+    } catch (e) {
+      setMsg({ tipo: 'vermelho', texto: (e as Error).message });
+    }
+  };
 
   const importarPlanilha = async (arquivo: File) => {
     try {
@@ -50,8 +86,9 @@ export default function Parametros({ dados, atualizar, substituir }: Props) {
     try {
       const d = validarBackup(JSON.parse(await arquivo.text()));
       if (!confirm(`Substituir os dados atuais por ${d.aportes.length} aporte(s) do backup?`)) return;
-      substituir({ ...d, parametros: { ...parametrosPadrao(), ...d.parametros } });
-      setFeriadosTexto(d.parametros.feriados.map(data).join('\n'));
+      const parametros = normalizarParametros(d.parametros);
+      substituir({ ...d, parametros });
+      setFeriadosTexto(parametros.feriados.map(data).join('\n'));
       setMsg({ tipo: 'azul', texto: 'Backup restaurado.' });
     } catch (e) {
       setMsg({ tipo: 'vermelho', texto: (e as Error).message });
@@ -63,7 +100,7 @@ export default function Parametros({ dados, atualizar, substituir }: Props) {
       .split(/[\n,;]+/)
       .map((s) => paraISO(s.trim()))
       .filter((s) => isISODate(s));
-    setP({ feriados: [...new Set(lista)].sort() });
+    setP({ feriados: [...new Set(lista)].sort(), feriadosFonte: 'Lista editada pelo usuário', feriadosVersao: '' });
     setMsg({ tipo: 'azul', texto: `${new Set(lista).size} feriado(s) salvos.` });
   };
 
@@ -75,12 +112,38 @@ export default function Parametros({ dados, atualizar, substituir }: Props) {
 
       <div className="grade metade" style={{ marginBottom: 12 }}>
         <div className="card">
-          <h2>CDI e IPCA de projeção</h2>
-          {!p.cdiData && <div className="aviso amarelo">Informe a data e a fonte do CDI. Projeções dependem dele e são estimativas.</div>}
+          <h2>CDI e IPCA</h2>
+          <p className="mut" style={{ fontSize: 13, marginTop: 0 }}>
+            <b>CDI realizado</b> (fato):{' '}
+            {cdiReal ? (
+              <>
+                último {pct(cdiReal.anual)} a.a. em {data(cdiReal.data)}, {p.cdiDiario.length} dias úteis desde {data(p.cdiDiario[0].data)}
+              </>
+            ) : (
+              'ainda não consultado'
+            )}
+            . Fonte: Banco Central (SGS 4389).{p.cdiAtualizadoEm && <> Consultado em {data(p.cdiAtualizadoEm)}.</>} O rendimento já decorrido usa o CDI de
+            cada dia; o futuro usa o CDI de projeção abaixo (<b>estimativa</b>).
+          </p>
+          {estadoCdi.erro && <div className="aviso amarelo">{estadoCdi.erro}</div>}
+          <div className="acoes" style={{ marginBottom: 8 }}>
+            <button className="btn" disabled={estadoCdi.carregando} onClick={() => void atualizarCdi()}>
+              {estadoCdi.carregando ? 'Consultando…' : 'Atualizar CDI agora'}
+            </button>
+          </div>
+          {!p.cdiData && <div className="aviso amarelo">Informe a data e a fonte do CDI de projeção. Projeções dependem dele e são estimativas.</div>}
           <div className="campos">
-            <CampoNumero rotulo="CDI anual" sufixo="%" escala={100} valor={p.cdiAnual} onChange={(x) => x != null && setP({ cdiAnual: x })} />
-            <CampoData rotulo="Data do CDI" valor={p.cdiData} onChange={(x) => setP({ cdiData: x })} />
-            <CampoTexto rotulo="Fonte do CDI" valor={p.cdiFonte} onChange={(x) => setP({ cdiFonte: x })} largo />
+            <CampoCheck rotulo="Projeção acompanha o último CDI do Banco Central" valor={p.cdiAutomatico} onChange={(x) => setP({ cdiAutomatico: x })} />
+            <CampoNumero
+              rotulo="CDI de projeção a.a."
+              sufixo="%"
+              escala={100}
+              valor={p.cdiAnual}
+              onChange={(x) => x != null && setP({ cdiAnual: x, cdiAutomatico: false })}
+              dica={p.cdiAutomatico ? 'Automático; editar desliga o automático' : 'Manual (ex.: se você espera queda dos juros)'}
+            />
+            <CampoData rotulo="Data do CDI" valor={p.cdiData} onChange={(x) => setP({ cdiData: x, cdiAutomatico: false })} />
+            <CampoTexto rotulo="Fonte do CDI" valor={p.cdiFonte} onChange={(x) => setP({ cdiFonte: x, cdiAutomatico: false })} largo />
             <CampoNumero rotulo="IPCA projetado a.a." sufixo="%" escala={100} valor={p.ipcaProjetado} onChange={(x) => setP({ ipcaProjetado: x })} dica="Usado só em aportes IPCA+" />
             <CampoData rotulo="Data do IPCA" valor={p.ipcaData} onChange={(x) => setP({ ipcaData: x })} />
             <CampoTexto rotulo="Fonte do IPCA" valor={p.ipcaFonte} onChange={(x) => setP({ ipcaFonte: x })} largo />
@@ -160,17 +223,42 @@ export default function Parametros({ dados, atualizar, substituir }: Props) {
         <div className="card">
           <h2>Feriados</h2>
           <p className="mut" style={{ fontSize: 13, marginTop: 0 }}>
-            Usados na contagem de dias úteis do rendimento. Lista inicial: feriados nacionais de 2020 a 2040 (conferir com o calendário ANBIMA). Uma data por linha.
+            Usados na contagem de dias úteis do rendimento. Em uso: <b>{p.feriadosFonte || 'lista sem origem informada'}</b>. Uma data por linha.
           </p>
+          {anbimaPublicada === undefined ? null : anbimaPublicada === null ? (
+            <p className="mut" style={{ fontSize: 13 }}>Não consegui conferir o site da ANBIMA agora. Você pode importar o arquivo baixado manualmente.</p>
+          ) : anbimaNova ? (
+            <div className="aviso amarelo">
+              A ANBIMA publicou um calendário em {data(anbimaPublicada)}, diferente da lista em uso.{' '}
+              <button className="btn pequeno" onClick={() => void importarAnbima('site')}>
+                Aplicar calendário novo
+              </button>
+            </div>
+          ) : (
+            <p className="mut" style={{ fontSize: 13 }}>Conferido: a lista em uso corresponde ao arquivo da ANBIMA de {data(anbimaPublicada)}.</p>
+          )}
           <textarea rows={8} value={feriadosTexto} onChange={(e) => setFeriadosTexto(e.target.value)} />
           <div className="acoes" style={{ marginTop: 8 }}>
             <button className="btn" onClick={salvarFeriados}>
               Salvar feriados
             </button>
+            <button
+              className="btn"
+              onClick={() =>
+                confirm('Voltar para o calendário ANBIMA embutido no app? Feriados adicionados à mão serão removidos.') &&
+                aplicarFeriados([...CALENDARIO_ANBIMA.feriados], CALENDARIO_ANBIMA.fonte, CALENDARIO_ANBIMA.versao)
+              }
+            >
+              Restaurar calendário ANBIMA
+            </button>
             <span className="mut" style={{ fontSize: 13, alignSelf: 'center' }}>
               {p.feriados.length} datas em uso
             </span>
           </div>
+          <label className="campo" style={{ marginTop: 8 }}>
+            <span>Importar arquivo da ANBIMA (feriados_nacionais.xls)</span>
+            <input type="file" accept=".xls,.xlsx" onChange={(e) => e.target.files?.[0] && void importarAnbima(e.target.files[0])} />
+          </label>
         </div>
 
         <div className="card">
@@ -199,7 +287,8 @@ export default function Parametros({ dados, atualizar, substituir }: Props) {
               className="btn perigo"
               onClick={() => {
                 if (confirm('Apagar todos os aportes e parâmetros deste navegador? Exporte um backup antes.')) {
-                  substituir(dadosVazios());
+                  const vazio = dadosVazios();
+                  substituir({ ...vazio, parametros: { ...vazio.parametros, cdiDiario: p.cdiDiario, cdiAtualizadoEm: p.cdiAtualizadoEm } });
                   setFeriadosTexto(dadosVazios().parametros.feriados.map(data).join('\n'));
                 }
               }}

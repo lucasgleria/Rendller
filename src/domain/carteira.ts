@@ -114,6 +114,7 @@ function avaliacaoVazia(a: Aporte): Avaliacao {
     data: a.dataAporte,
     diasUteis: 0,
     diasCorridos: 0,
+    diasUteisEstimados: 0,
     bruto: a.valor || 0,
     rendimentoBruto: 0,
     pctIof: 0,

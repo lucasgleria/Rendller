@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useDados } from './armazenamento';
+import { useCdiOnline } from './cdiOnline';
 import { montarLinhas } from './domain/carteira';
 import { hojeISO } from './domain/datas';
 import Aportes from './pages/Aportes';
@@ -21,6 +22,7 @@ export default function App() {
   const [pagina, setPagina] = useState<Pagina>(paginaInicial);
   const hoje = hojeISO();
   const linhas = useMemo(() => montarLinhas(dados.aportes, hoje, dados.parametros), [dados, hoje]);
+  const { estadoCdi, atualizarCdi } = useCdiOnline(dados, atualizar, hoje);
 
   const ir = (p: Pagina) => {
     setPagina(p);
@@ -50,13 +52,13 @@ export default function App() {
       </header>
       <main>
         {erroGravacao && <div className="aviso vermelho">Não consegui salvar neste navegador (modo privado ou armazenamento cheio). Exporte um backup em Parâmetros.</div>}
-        {pagina === 'Painel' && <Painel linhas={linhas} parametros={dados.parametros} hoje={hoje} ir={ir} />}
+        {pagina === 'Painel' && <Painel linhas={linhas} parametros={dados.parametros} hoje={hoje} ir={ir} estadoCdi={estadoCdi} />}
         {pagina === 'Aportes' && <Aportes linhas={linhas} parametros={dados.parametros} hoje={hoje} atualizar={atualizar} />}
         {pagina === 'Instituições' && <Instituicoes linhas={linhas} parametros={dados.parametros} />}
         {pagina === 'Simulador' && <Simulador parametros={dados.parametros} linhas={linhas} hoje={hoje} />}
-        {pagina === 'Parâmetros' && <Parametros dados={dados} atualizar={atualizar} substituir={substituir} />}
+        {pagina === 'Parâmetros' && <Parametros dados={dados} atualizar={atualizar} substituir={substituir} hoje={hoje} estadoCdi={estadoCdi} atualizarCdi={atualizarCdi} />}
         <p className="rodape">
-          Valores futuros são estimativas com o CDI de projeção configurado e não garantem rentabilidade. Dados salvos apenas neste navegador.
+          Rendimento já decorrido usa o CDI realizado publicado pelo Banco Central; valores futuros são estimativas com o CDI de projeção e não garantem rentabilidade. Seus dados ficam apenas neste navegador.
         </p>
       </main>
     </>

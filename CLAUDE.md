@@ -25,13 +25,18 @@ Antes de dizer que uma mudança está pronta, rode `npm test` e `npm run build`.
 | Caminho | Papel |
 |---|---|
 | `src/domain/types.ts` | Tipos: `Aporte` (um lote), `Parametros`, `Dados` |
-| `src/domain/datas.ts` | Datas ISO sem fuso, `Calendario` (dias úteis com feriados), feriados nacionais |
+| `src/domain/datas.ts` | Datas ISO sem fuso, `Calendario` (dias úteis com feriados), regra dos feriados nacionais |
+| `src/domain/feriadosAnbima.ts` | Calendário oficial ANBIMA embutido (2001–2099), padrão de `Parametros.feriados` |
+| `src/domain/cdi.ts` | CDI realizado: `HistoricoCdi`, leitura da série do Banco Central, mescla e aplicação da consulta |
 | `src/domain/calculo.ts` | Motor: fator bruto por indexador, IOF, IR, `avaliar()`, `validarAporte()` |
 | `src/domain/carteira.ts` | Linhas com status e alertas, agrupamento por instituição/FGC, resumo, série de projeção |
 | `src/domain/padroes.ts` | Parâmetros padrão (tabelas de IR/IOF, FGC, CDI inicial) e listas de opções |
-| `src/domain/importacao.ts` | Importação da planilha .xlsx (abas `Aportes` e `Config`) e validação de backup |
+| `src/domain/importacao.ts` | Importação da planilha .xlsx (abas `Aportes` e `Config`), do calendário ANBIMA (.xls) e validação de backup |
 | `src/domain/calculo.test.ts` | Testes obrigatórios (seção 6) |
 | `src/armazenamento.ts` | Persistência em `localStorage` (chave `rendller:dados:v1`) e download de arquivos |
+| `src/servicos.ts` | Rede: API do Banco Central (CDI) e proxy `/anbima/*` (calendário) |
+| `src/cdiOnline.ts` | Hook que atualiza o CDI ao abrir o app (uma vez por dia) e sob demanda |
+| `netlify.toml` | Build, proxy da ANBIMA e cabeçalhos do deploy no Netlify |
 | `src/pages/*.tsx` | Telas: Painel, Aportes, Instituições, Simulador, Parâmetros |
 | `src/components/campos.tsx` | Campos de formulário (números pt-BR, percentuais com `escala={100}`) |
 | `src/formato.ts` | Formatação BRL, %, datas `dd/mm/aaaa` |
@@ -42,7 +47,8 @@ Regras de arquitetura:
 - As telas só exibem e editam; não fazem conta financeira própria.
 - Datas são strings ISO `aaaa-mm-dd`. Use as funções de `datas.ts`, nunca `new Date()` para aritmética de dias.
 - Percentuais e taxas são guardados em decimal (103% do CDI = `1.03`; 12% a.a. = `0.12`).
-- Os dados ficam **só no navegador** (decisão do usuário em 04/10/2026). Mudanças no formato de `Dados` precisam continuar lendo backups e dados antigos: `carregar()` mescla parâmetros novos com os padrões.
+- Os dados ficam **só no navegador** (decisão do usuário em 04/10/2026). Mudanças no formato de `Dados` precisam continuar lendo backups e dados antigos: `normalizarParametros()` (em `padroes.ts`) mescla parâmetros novos com os padrões e migra dados antigos.
+- Rede só para dados públicos (CDI do Banco Central, calendário ANBIMA), nunca para enviar dados do usuário. Busca de rede fica fora de `src/domain/`; o domínio recebe os dados já baixados.
 
 ## 3. Regras de ouro
 
@@ -56,7 +62,7 @@ Regras de arquitetura:
 
 ## 4. Regras de cálculo (como estão implementadas)
 
-**Dias úteis:** contados no intervalo `[data do aporte, data final)`, descontando sábados, domingos e os feriados de `Parametros.feriados`. Ver `Calendario.diasUteis`.
+**Dias úteis:** contados no intervalo `[data do aporte, data final)`, descontando sábados, domingos e os feriados de `Parametros.feriados`. Ver `Calendario.diasUteis`. O padrão é o calendário oficial da **ANBIMA** (arquivo de 22/12/2023, 2001–2099), conferido contra a regra de `feriadosNacionais()`. A tela de Parâmetros compara a data do arquivo publicado pela ANBIMA com a lista em uso e permite aplicar um calendário novo.
 
 **Pós-fixado (% do CDI):**
 ```
@@ -64,6 +70,8 @@ taxa_diaria_CDI = (1 + CDI_anual)^(1/252) − 1
 fator_fase      = (1 + taxa_diaria_CDI × percentual)^dias_uteis_da_fase
 ```
 A fase promocional vai de `[aporte, aporte + diasPromo)` em dias corridos; a fase padrão vai do fim da promoção até a data final. O fator total é o produto dos fatores.
+
+**CDI realizado:** `Parametros.cdiDiario` guarda o CDI anualizado de cada dia útil (Banco Central, SGS 4389). Nos dias úteis com dado publicado, o fator do dia é `1 + ((1 + CDI_do_dia)^(1/252) − 1) × percentual`; nos dias sem dado (futuro ou lacuna), vale a fórmula acima com o CDI de projeção. `Avaliacao.diasUteisEstimados` conta os dias projetados: com 0, o valor é cálculo sobre fatos, não estimativa. Com `cdiAutomatico`, o CDI de projeção acompanha o último CDI publicado; editá-lo à mão desliga o automático. O CDI futuro continua sendo **estimativa**.
 
 **Prefixado:** `fator = (1 + taxa_anual)^(dias_uteis / 252)`
 **IPCA+:** `fator = (1 + IPCA_projetado)^(du/252) × (1 + spread)^(du/252)`. IPCA futuro é sempre estimativa; sem IPCA informado o lote fica marcado como não calculável.
@@ -109,6 +117,8 @@ Qualquer mudança no motor precisa manter (e, se for regra nova, ganhar) testes 
 - [ ] Agrupamento por banco/conglomerado e FGC
 - [ ] Linha vazia ou com dado faltando (não pode quebrar)
 - [ ] Resgate parcial (divisão proporcional, contagem tributária mantida, soma das partes = lote original)
+- [ ] CDI realizado (dias com dado usam o CDI do dia, lacunas e futuro usam a projeção, fim de semana/feriado ignorados)
+- [ ] Calendário ANBIMA embutido = regra dos feriados nacionais (2001–2099); migração da lista antiga
 
 Os valores esperados foram conferidos por um cálculo independente (CDI 13,90% a.a., feriados nacionais). Valide valores novos por um segundo caminho antes de gravá-los no teste; não ajuste o esperado só para o teste passar. Checagens de sanidade: rendimento ≥ 0, líquido < bruto, IR na faixa certa, IOF zero a partir de 30 dias.
 
@@ -151,6 +161,6 @@ Os valores esperados foram conferidos por um cálculo independente (CDI 13,90% a
 
 ## 11. Pendências conhecidas
 
-- Deploy: o repositório é privado; GitHub Pages exige plano pago para repositório privado. Alternativas: repositório público, GitHub Pro, Vercel ou Netlify.
-- O CDI padrão (13,90%) veio da planilha e está sem data e fonte; o usuário precisa confirmar o valor vigente em Parâmetros.
-- Ainda não implementado: aba de CDI histórico diário (modo histórico da seção 5.4 do planejamento), conferência automática do calendário ANBIMA.
+- Deploy no Netlify (`netlify.toml`), decidido pelo usuário em 04/10/2026. O GitHub Actions só roda CI.
+- O CDI padrão (13,90%, da planilha) só vale até a primeira consulta ao Banco Central; depois o CDI de projeção acompanha o último CDI publicado.
+- IPCA projetado continua manual (estimativa informada pelo usuário).

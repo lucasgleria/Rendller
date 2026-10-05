@@ -243,6 +243,15 @@ function Editor({
                 <span>Fase atual</span>
                 <b>{h.fase ?? '—'}</b>
               </div>
+              {a.indexador === 'CDI' && h.diasUteis > 0 && (
+                <div>
+                  <span>Até hoje</span>
+                  <b>
+                    {h.diasUteis - h.diasUteisEstimados} dias com CDI realizado
+                    {h.diasUteisEstimados > 0 ? ` · ${h.diasUteisEstimados} estimados` : ''}
+                  </b>
+                </div>
+              )}
               <div>
                 <span>Bruto hoje</span>
                 <b>{moeda(h.bruto)}</b>
@@ -404,7 +413,14 @@ function Editor({
                   </div>
                 </div>
                 <p className="sub">
-                  Valores <span className="estimativa">estimativa</span> com o CDI de projeção; o banco calcula com o CDI realizado.
+                  {simulacaoParcial.avaliacao.diasUteisEstimados > 0 ? (
+                    <>
+                      Valores <span className="estimativa">estimativa</span>: {simulacaoParcial.avaliacao.diasUteisEstimados} dia(s) útil(eis) sem CDI publicado usam o CDI de projeção.
+                    </>
+                  ) : (
+                    'Calculado com o CDI realizado de cada dia.'
+                  )}{' '}
+                  O extrato do banco é a referência final.
                 </p>
               </>
             )}
