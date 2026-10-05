@@ -84,6 +84,8 @@ IR e IOF incidem **sobre o rendimento, nunca sobre o principal**.
 
 **Arredondamento:** só na exibição. Cálculos intermediários mantêm precisão total.
 
+**Resgate parcial:** `resgatarParcial()` divide o lote em duas linhas na proporção do valor pedido (bruto ou líquido). A parte resgatada mantém o `id` e vira `Resgatado`; a remanescente ganha `id` novo, com a **mesma data de aporte, taxa e vencimento** (IR, IOF e fase promocional seguem contando do aporte original). Como bruto, IOF e IR são proporcionais ao principal, as duas partes somadas reproduzem o lote original em qualquer data. O campo opcional `divisao` guarda o lote de origem, o principal original e a fração de cada linha.
+
 **Status:** `Ativo`, `Planejado` e `Resgatado` são informados pelo usuário; `Ativo` vira `Vencido` automaticamente na data de vencimento. O saldo da carteira soma `Ativo` e `Vencido` (vencido ainda sem resgate registrado).
 
 ## 5. FGC e concentração
@@ -106,6 +108,7 @@ Qualquer mudança no motor precisa manter (e, se for regra nova, ganhar) testes 
 - [ ] Prazo acima de 720 dias
 - [ ] Agrupamento por banco/conglomerado e FGC
 - [ ] Linha vazia ou com dado faltando (não pode quebrar)
+- [ ] Resgate parcial (divisão proporcional, contagem tributária mantida, soma das partes = lote original)
 
 Os valores esperados foram conferidos por um cálculo independente (CDI 13,90% a.a., feriados nacionais). Valide valores novos por um segundo caminho antes de gravá-los no teste; não ajuste o esperado só para o teste passar. Checagens de sanidade: rendimento ≥ 0, líquido < bruto, IR na faixa certa, IOF zero a partir de 30 dias.
 
@@ -150,4 +153,4 @@ Os valores esperados foram conferidos por um cálculo independente (CDI 13,90% a
 
 - Deploy: o repositório é privado; GitHub Pages exige plano pago para repositório privado. Alternativas: repositório público, GitHub Pro, Vercel ou Netlify.
 - O CDI padrão (13,90%) veio da planilha e está sem data e fonte; o usuário precisa confirmar o valor vigente em Parâmetros.
-- Ainda não implementado: aba de CDI histórico diário (modo histórico da seção 5.4 do planejamento), resgate parcial com lote remanescente, conferência automática do calendário ANBIMA.
+- Ainda não implementado: aba de CDI histórico diário (modo histórico da seção 5.4 do planejamento), conferência automática do calendário ANBIMA.

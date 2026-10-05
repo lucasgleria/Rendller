@@ -5,7 +5,7 @@ App web para controlar aportes em CDB e renda fixa: rendimento bruto e líquido,
 ## Telas
 
 - **Painel**: total aportado, saldo bruto, impostos, saldo líquido hoje e no vencimento, evolução estimada da carteira, liquidez, próximos vencimentos e alertas.
-- **Aportes**: um lote por linha. Pós-fixado (% do CDI com fase promocional), prefixado e IPCA+. Registro de resgate sem apagar o histórico.
+- **Aportes**: um lote por linha. Pós-fixado (% do CDI com fase promocional), prefixado e IPCA+. Registro de resgate total ou parcial sem apagar o histórico (o resgate parcial divide o lote em parte resgatada e parte remanescente, mantendo a data do aporte para IR e IOF).
 - **Instituições**: consolidação por conglomerado, % da carteira, cobertura e excesso do FGC.
 - **Simulador**: até 5 opções lado a lado, com IR, IOF, valor final líquido, ganho por mês e taxa líquida anualizada.
 - **Parâmetros**: CDI e IPCA de projeção (com data e fonte), tabelas de IR e IOF, limites do FGC, janelas de alerta, feriados, importação da planilha e backup.

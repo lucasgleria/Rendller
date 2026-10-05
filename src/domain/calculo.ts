@@ -129,3 +129,67 @@ export function validarAporte(a: Aporte, p: Parametros): string[] {
   if (a.status === 'Resgatado' && !a.resgate) e.push('Dados do resgate');
   return e;
 }
+
+export type BaseResgate = 'bruto' | 'liquido';
+
+export interface ResgateParcial {
+  /** Parte resgatada: mantém o `id` do lote, status `Resgatado` e os valores estimados do resgate. */
+  resgatado: Aporte;
+  /** Parte que continua aplicada: mesma data de aporte, taxa e vencimento (a contagem de IR/IOF não reinicia). */
+  remanescente: Aporte;
+  /** Fração do principal do lote que foi resgatada. */
+  fracao: number;
+  avaliacao: Avaliacao;
+}
+
+/**
+ * Resgate parcial de um lote em `data`. O banco resgata uma fração proporcional do lote; como bruto,
+ * IOF e IR são proporcionais ao principal, dividir o principal na mesma fração preserva os valores totais.
+ * O lote original não é apagado: vira a linha resgatada (mesmo `id`) e ganha uma linha remanescente.
+ * `valor` é o valor pedido, bruto ou líquido conforme `base`.
+ */
+export function resgatarParcial(
+  a: Aporte,
+  data: ISODate,
+  valor: number,
+  base: BaseResgate,
+  p: Parametros,
+  cal: Calendario,
+  novoId: string,
+): ResgateParcial | { erro: string } {
+  if (a.status !== 'Ativo') return { erro: 'Só lotes ativos podem ter resgate parcial.' };
+  if (validarAporte(a, p).length) return { erro: 'Complete os dados do lote antes do resgate.' };
+  if (!data || data < a.dataAporte) return { erro: 'A data do resgate é anterior ao aporte.' };
+  if (data >= a.vencimento) return { erro: 'No vencimento ou depois dele, registre o resgate total.' };
+  if (!a.permiteResgateAntecipado) return { erro: 'Este lote não permite resgate antecipado.' };
+  if (a.carenciaAte && data < a.carenciaAte) return { erro: 'O lote ainda está em carência.' };
+  const atual = avaliar(a, data, p, cal);
+  if (!atual.calculavel) return { erro: 'Não há como estimar o valor do lote nesta data.' };
+  const total = base === 'bruto' ? atual.bruto : atual.liquido;
+  if (!(valor > 0)) return { erro: 'Informe o valor do resgate.' };
+  if (valor >= total) return { erro: 'O valor cobre o lote inteiro: registre o resgate total.' };
+
+  const fracao = valor / total;
+  const valorOriginal = a.divisao?.valorOriginal ?? a.valor;
+  const origemId = a.divisao?.origemId ?? a.id;
+  const principalResgatado = a.valor * fracao;
+  const principalRestante = a.valor - principalResgatado;
+  const resgatadoBase: Aporte = { ...a, valor: principalResgatado };
+  const r = avaliar(resgatadoBase, data, p, cal);
+  return {
+    fracao,
+    avaliacao: r,
+    resgatado: {
+      ...resgatadoBase,
+      status: 'Resgatado',
+      resgate: { data, valorBruto: r.bruto, irRetido: r.ir, iofRetido: r.iof, valorLiquido: r.liquido },
+      divisao: { origemId, valorOriginal, data, fracao: principalResgatado / valorOriginal },
+    },
+    remanescente: {
+      ...a,
+      id: novoId,
+      valor: principalRestante,
+      divisao: { origemId, valorOriginal, data, fracao: principalRestante / valorOriginal },
+    },
+  };
+}

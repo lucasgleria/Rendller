@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { CampoCheck, CampoData, CampoNumero, CampoSelect, CampoTexto } from '../components/campos';
-import { avaliar, validarAporte } from '../domain/calculo';
+import { avaliar, resgatarParcial, validarAporte, type BaseResgate } from '../domain/calculo';
 import type { Linha } from '../domain/carteira';
 import { Calendario } from '../domain/datas';
 import { INDEXADORES, LIQUIDEZES, STATUS_MANUAIS, TIPOS, novoAporte } from '../domain/padroes';
@@ -39,6 +39,10 @@ export default function Aportes({ linhas, parametros, hoje, atualizar }: Props) 
       const existe = d.aportes.some((x) => x.id === a.id);
       return { ...d, aportes: existe ? d.aportes.map((x) => (x.id === a.id ? a : x)) : [...d.aportes, a] };
     });
+    setEditando(null);
+  };
+  const dividir = (resgatado: Aporte, remanescente: Aporte) => {
+    atualizar((d) => ({ ...d, aportes: [...d.aportes.map((x) => (x.id === resgatado.id ? resgatado : x)), remanescente] }));
     setEditando(null);
   };
   const excluir = (a: Aporte) => {
@@ -88,6 +92,11 @@ export default function Aportes({ linhas, parametros, hoje, atualizar }: Props) 
                   <td>
                     {data(l.aporte.dataAporte)}
                     <div className="linha2">{l.aporte.produto || l.aporte.tipo}</div>
+                    {l.aporte.divisao && (
+                      <div className="linha2">
+                        {pct(l.aporte.divisao.fracao, 1)} de {moeda(l.aporte.divisao.valorOriginal)} · dividido em {data(l.aporte.divisao.data)}
+                      </div>
+                    )}
                   </td>
                   <td>
                     {l.aporte.emissor || '—'}
@@ -142,6 +151,7 @@ export default function Aportes({ linhas, parametros, hoje, atualizar }: Props) 
           parametros={parametros}
           hoje={hoje}
           onSalvar={salvar}
+          onDividir={dividir}
           onExcluir={excluir}
           onDuplicar={(a) => setEditando(novoAporte({ ...a, id: crypto.randomUUID(), dataAporte: hoje, status: 'Ativo', resgate: null }))}
           onFechar={() => setEditando(null)}
@@ -157,6 +167,7 @@ function Editor({
   parametros: p,
   hoje,
   onSalvar,
+  onDividir,
   onExcluir,
   onDuplicar,
   onFechar,
@@ -166,17 +177,21 @@ function Editor({
   parametros: Parametros;
   hoje: string;
   onSalvar: (a: Aporte) => void;
+  onDividir: (resgatado: Aporte, remanescente: Aporte) => void;
   onExcluir: (a: Aporte) => void;
   onDuplicar: (a: Aporte) => void;
   onFechar: () => void;
 }) {
   const [a, setA] = useState<Aporte>(inicial);
+  const [parcial, setParcial] = useState<{ data: string; valor: number | null; base: BaseResgate; novoId: string } | null>(null);
   const set = <K extends keyof Aporte>(k: K, v: Aporte[K]) => setA((x) => ({ ...x, [k]: v }));
   const pend = validarAporte(a, p);
   const cal = new Calendario(p.feriados);
   const datasOk = !!a.dataAporte && !!a.vencimento && a.vencimento > a.dataAporte;
   const h = datasOk ? avaliar(a, a.status === 'Resgatado' && a.resgate?.data ? a.resgate.data : hoje, p, cal) : null;
   const v = datasOk ? avaliar(a, a.vencimento, p, cal) : null;
+
+  const simulacaoParcial = parcial ? resgatarParcial(a, parcial.data, parcial.valor ?? 0, parcial.base, p, cal, parcial.novoId) : null;
 
   const marcarResgate = () => {
     const ref = h ?? null;
@@ -202,6 +217,13 @@ function Editor({
             Fechar
           </button>
         </div>
+
+        {a.divisao && (
+          <div className="aviso azul">
+            Parte de um lote de {moeda(a.divisao.valorOriginal)} dividido por resgate parcial em {data(a.divisao.data)}: esta linha tem {moeda(a.valor)} de
+            principal ({pct(a.divisao.fracao, 1)}). A data do aporte e a contagem de IR/IOF são as do lote original.
+          </div>
+        )}
 
         {pend.length > 0 && <div className="aviso amarelo">Falta: {pend.join(', ')}.</div>}
 
@@ -328,6 +350,79 @@ function Editor({
           </fieldset>
         )}
 
+        {parcial && (
+          <fieldset>
+            <legend>Resgate parcial</legend>
+            <div className="aviso azul">
+              O lote vira duas linhas: a parte resgatada (status Resgatado, com os valores estimados abaixo) e a parte que continua aplicada, com a mesma
+              data de aporte, taxa e vencimento. Depois, corrija a parte resgatada com os valores do extrato.
+            </div>
+            <div className="campos">
+              <CampoData rotulo="Data do resgate" valor={parcial.data} onChange={(x) => setParcial({ ...parcial, data: x })} />
+              <CampoNumero rotulo="Valor pedido (R$)" valor={parcial.valor} onChange={(x) => setParcial({ ...parcial, valor: x })} />
+              <CampoSelect
+                rotulo="O valor pedido é"
+                valor={parcial.base}
+                opcoes={[
+                  { valor: 'liquido', rotulo: 'Líquido (cai na conta)' },
+                  { valor: 'bruto', rotulo: 'Bruto (antes de IR/IOF)' },
+                ]}
+                onChange={(x) => setParcial({ ...parcial, base: x })}
+              />
+            </div>
+            {simulacaoParcial && 'erro' in simulacaoParcial && <div className="aviso amarelo">{simulacaoParcial.erro}</div>}
+            {simulacaoParcial && !('erro' in simulacaoParcial) && (
+              <>
+                <div className="detalhe" style={{ margin: '12px 0' }}>
+                  <div>
+                    <span>Fração do lote</span>
+                    <b>{pct(simulacaoParcial.fracao)}</b>
+                  </div>
+                  <div>
+                    <span>Principal resgatado</span>
+                    <b>{moeda(simulacaoParcial.resgatado.valor)}</b>
+                  </div>
+                  <div>
+                    <span>Bruto resgatado</span>
+                    <b>{moeda(simulacaoParcial.avaliacao.bruto)}</b>
+                  </div>
+                  <div>
+                    <span>IOF ({pct(simulacaoParcial.avaliacao.pctIof, 0)})</span>
+                    <b>{moeda(simulacaoParcial.avaliacao.iof)}</b>
+                  </div>
+                  <div>
+                    <span>IR ({pct(simulacaoParcial.avaliacao.aliquotaIr, 1)})</span>
+                    <b>{moeda(simulacaoParcial.avaliacao.ir)}</b>
+                  </div>
+                  <div>
+                    <span>Líquido recebido</span>
+                    <b>{moeda(simulacaoParcial.avaliacao.liquido)}</b>
+                  </div>
+                  <div>
+                    <span>Principal que continua aplicado</span>
+                    <b>{moeda(simulacaoParcial.remanescente.valor)}</b>
+                  </div>
+                </div>
+                <p className="sub">
+                  Valores <span className="estimativa">estimativa</span> com o CDI de projeção; o banco calcula com o CDI realizado.
+                </p>
+              </>
+            )}
+            <div className="acoes">
+              <button
+                className="btn primario"
+                disabled={!simulacaoParcial || 'erro' in simulacaoParcial}
+                onClick={() => simulacaoParcial && !('erro' in simulacaoParcial) && onDividir(simulacaoParcial.resgatado, simulacaoParcial.remanescente)}
+              >
+                Confirmar resgate parcial
+              </button>
+              <button className="btn" onClick={() => setParcial(null)}>
+                Cancelar
+              </button>
+            </div>
+          </fieldset>
+        )}
+
         <fieldset>
           <legend>Observações</legend>
           <textarea rows={3} value={a.observacoes} onChange={(e) => set('observacoes', e.target.value)} />
@@ -341,6 +436,11 @@ function Editor({
             {!novo && a.status !== 'Resgatado' && (
               <button className="btn" onClick={marcarResgate}>
                 Registrar resgate
+              </button>
+            )}
+            {!novo && a.status === 'Ativo' && !parcial && (
+              <button className="btn" onClick={() => setParcial({ data: hoje, valor: null, base: 'liquido', novoId: crypto.randomUUID() })}>
+                Resgate parcial
               </button>
             )}
             {!novo && (

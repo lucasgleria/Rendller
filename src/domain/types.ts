@@ -16,6 +16,17 @@ export interface Resgate {
   valorLiquido: number;
 }
 
+/**
+ * Rastro de um resgate parcial: o lote original vira duas linhas com a mesma data de aporte.
+ * A parte resgatada mantém o `id` original; a remanescente ganha `id` novo e `origemId` aponta para o original.
+ */
+export interface Divisao {
+  origemId: string;
+  valorOriginal: number; // principal do lote antes da divisão
+  data: ISODate; // data do resgate parcial
+  fracao: number; // fração do principal original que ficou nesta linha
+}
+
 /** Um aporte = um lote independente (CLAUDE.md 0.2 e 9.1). */
 export interface Aporte {
   id: string;
@@ -46,6 +57,8 @@ export interface Aporte {
   cdiProjecao: number | null; // sobrescreve o CDI de Parametros só nesta linha
   // Resgate (preenchido quando status = Resgatado)
   resgate: Resgate | null;
+  /** Só em linhas criadas por resgate parcial; ausente em dados antigos. */
+  divisao?: Divisao | null;
 }
 
 export interface FaixaIR {

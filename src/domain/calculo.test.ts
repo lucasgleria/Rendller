@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { aliquotaIR, avaliar, percentualIOF } from './calculo';
+import { aliquotaIR, avaliar, percentualIOF, resgatarParcial, type ResgateParcial } from './calculo';
 import { agruparPorInstituicao, montarLinhas, resumir } from './carteira';
 import { Calendario, feriadosNacionais, somaDias } from './datas';
 import { novoAporte, parametrosPadrao } from './padroes';
@@ -133,5 +133,80 @@ describe('robustez', () => {
     const ipca = avaliar(cdb({ indexador: 'IPCA', spreadIpca: 0.06, vencimento: venc(365) }), venc(365), { ...p, ipcaProjetado: 0.04 }, cal);
     const anos = ipca.diasUteis / 252;
     expect(ipca.bruto).toBeCloseTo(1000 * Math.pow(1.04, anos) * Math.pow(1.06, anos), 8);
+  });
+});
+
+describe('resgate parcial', () => {
+  // Referências de um laço dia a dia independente do motor (CDI 13,90%, feriados nacionais).
+  const lote = cdb({ id: 'lote-1', dataAporte: '2026-08-19', valor: 500, pctCdi: 1.03, pctCdiPromo: 1.3, diasPromo: 30, vencimento: '2028-08-10' });
+  const ok = (r: ResgateParcial | { erro: string }) => {
+    if ('erro' in r) throw new Error(r.erro);
+    return r;
+  };
+
+  it('divide o lote pelo valor bruto e mantém a contagem tributária', () => {
+    const r = ok(resgatarParcial(lote, '2026-10-05', 200, 'bruto', p, cal, 'lote-2'));
+    expect(r.fracao).toBeCloseTo(0.392099, 6);
+    expect(r.resgatado.id).toBe('lote-1');
+    expect(r.resgatado.status).toBe('Resgatado');
+    expect(r.resgatado.valor).toBeCloseTo(196.05, 2);
+    expect(r.resgatado.resgate!.valorBruto).toBeCloseTo(200, 8);
+    expect(r.resgatado.resgate!.irRetido).toBeCloseTo(0.89, 2); // 22,5% sobre o rendimento da fração
+    expect(r.resgatado.resgate!.iofRetido).toBe(0); // 47 dias corridos
+    expect(r.resgatado.resgate!.valorLiquido).toBeCloseTo(199.11, 2);
+    expect(r.remanescente.id).toBe('lote-2');
+    expect(r.remanescente.status).toBe('Ativo');
+    expect(r.remanescente.valor).toBeCloseTo(303.95, 2);
+    expect(r.remanescente.dataAporte).toBe('2026-08-19'); // não reinicia IR nem fase promocional
+    expect(r.remanescente.divisao).toEqual({ origemId: 'lote-1', valorOriginal: 500, data: '2026-10-05', fracao: expect.closeTo(0.6079, 4) });
+    expect(r.resgatado.valor + r.remanescente.valor).toBe(500);
+  });
+
+  it('partes somadas reproduzem o lote original em qualquer data', () => {
+    const r = ok(resgatarParcial(lote, '2026-10-05', 200, 'bruto', p, cal, 'lote-2'));
+    for (const d of ['2026-10-05', '2027-03-01', '2027-09-10', '2028-08-10']) {
+      const o = avaliar(lote, d, p, cal);
+      const s = avaliar(r.resgatado, d, p, cal);
+      const m = avaliar(r.remanescente, d, p, cal);
+      expect(s.bruto + m.bruto).toBeCloseTo(o.bruto, 9);
+      expect(s.ir + m.ir).toBeCloseTo(o.ir, 9);
+      expect(s.liquido + m.liquido).toBeCloseTo(o.liquido, 9);
+      expect(m.aliquotaIr).toBe(o.aliquotaIr);
+    }
+  });
+
+  it('pelo valor líquido, com IOF antes de 30 dias', () => {
+    const a = cdb({ id: 'x', dataAporte: '2026-10-01', valor: 700, pctCdi: 1.085, vencimento: '2030-10-01' });
+    const r = ok(resgatarParcial(a, '2026-10-15', 300, 'liquido', p, cal, 'y'));
+    expect(r.fracao).toBeCloseTo(0.427784, 6);
+    expect(r.resgatado.resgate!.valorLiquido).toBeCloseTo(300, 8);
+    expect(r.resgatado.resgate!.valorBruto).toBeCloseTo(300.96, 2);
+    expect(r.resgatado.resgate!.iofRetido).toBeCloseTo(0.8, 2); // 53% no 14º dia
+  });
+
+  it('resgates parciais em cadeia apontam para o lote de origem', () => {
+    const r1 = ok(resgatarParcial(lote, '2026-10-05', 200, 'bruto', p, cal, 'lote-2'));
+    const r2 = ok(resgatarParcial(r1.remanescente, '2027-01-04', 100, 'bruto', p, cal, 'lote-3'));
+    expect(r2.resgatado.id).toBe('lote-2');
+    expect(r2.remanescente.divisao!.origemId).toBe('lote-1');
+    expect(r1.resgatado.divisao!.fracao + r2.resgatado.divisao!.fracao + r2.remanescente.divisao!.fracao).toBeCloseTo(1, 12);
+  });
+
+  it('recusa casos inválidos sem quebrar', () => {
+    const erro = (r: ResgateParcial | { erro: string }) => ('erro' in r ? r.erro : '');
+    expect(erro(resgatarParcial(lote, '2026-10-05', 600, 'bruto', p, cal, 'n'))).toMatch(/resgate total/);
+    expect(erro(resgatarParcial(lote, '2026-10-05', 0, 'bruto', p, cal, 'n'))).toMatch(/valor/);
+    expect(erro(resgatarParcial(lote, '2026-08-01', 100, 'bruto', p, cal, 'n'))).toMatch(/anterior/);
+    expect(erro(resgatarParcial(lote, '2028-08-10', 100, 'bruto', p, cal, 'n'))).toMatch(/vencimento/);
+    expect(erro(resgatarParcial({ ...lote, permiteResgateAntecipado: false }, '2026-10-05', 100, 'bruto', p, cal, 'n'))).toMatch(/antecipado/);
+    expect(erro(resgatarParcial({ ...lote, carenciaAte: '2027-01-01' }, '2026-10-05', 100, 'bruto', p, cal, 'n'))).toMatch(/carência/);
+    expect(erro(resgatarParcial(novoAporte(), '2026-10-05', 100, 'bruto', p, cal, 'n'))).toMatch(/Complete/);
+  });
+
+  it('carteira conta só a parte remanescente', () => {
+    const r = ok(resgatarParcial(lote, '2026-10-05', 200, 'bruto', p, cal, 'lote-2'));
+    const res = resumir(montarLinhas([r.resgatado, r.remanescente], '2026-10-05', p), p);
+    expect(res.aportado).toBeCloseTo(303.95, 2);
+    expect(res.resgatadoLiquido).toBeCloseTo(199.11, 2);
   });
 });
