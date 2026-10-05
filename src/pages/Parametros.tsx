@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { baixarArquivo } from '../armazenamento';
 import type { EstadoCdi } from '../cdiOnline';
+import CartaoSincronizacao from '../components/CartaoSincronizacao';
 import { CampoCheck, CampoData, CampoNumero, CampoTexto } from '../components/campos';
 import { ultimoCdi } from '../domain/cdi';
 import { isISODate } from '../domain/datas';
@@ -10,6 +11,7 @@ import { dadosVazios, normalizarParametros } from '../domain/padroes';
 import type { Dados, ISODate, Parametros as P } from '../domain/types';
 import { data, moeda, pct } from '../formato';
 import { baixarCalendarioAnbima, lerArquivoAnbima, versaoAnbimaPublicada } from '../servicos';
+import type { Sincronizacao } from '../sincronizacao';
 
 interface Props {
   dados: Dados;
@@ -18,9 +20,10 @@ interface Props {
   hoje: ISODate;
   estadoCdi: EstadoCdi;
   atualizarCdi: () => Promise<void>;
+  sincronizacao: Sincronizacao;
 }
 
-export default function Parametros({ dados, atualizar, substituir, hoje, estadoCdi, atualizarCdi }: Props) {
+export default function Parametros({ dados, atualizar, substituir, hoje, estadoCdi, atualizarCdi, sincronizacao }: Props) {
   const p = dados.parametros;
   const setP = (parcial: Partial<P>) => atualizar((d) => ({ ...d, parametros: { ...d.parametros, ...parcial } }));
   const [msg, setMsg] = useState<{ tipo: 'azul' | 'vermelho'; texto: string } | null>(null);
@@ -109,6 +112,8 @@ export default function Parametros({ dados, atualizar, substituir, hoje, estadoC
       <h1>Parâmetros</h1>
       <p className="sub">Toda conta do app lê daqui. Nada de taxa escrita dentro do cálculo. Premissas tributárias: {p.premissasVersao}.</p>
       {msg && <div className={`aviso ${msg.tipo}`}>{msg.texto}</div>}
+
+      <CartaoSincronizacao s={sincronizacao} dados={dados} />
 
       <div className="grade metade" style={{ marginBottom: 12 }}>
         <div className="card">
@@ -264,7 +269,7 @@ export default function Parametros({ dados, atualizar, substituir, hoje, estadoC
         <div className="card">
           <h2>Dados</h2>
           <p className="mut" style={{ fontSize: 13, marginTop: 0 }}>
-            Seus dados ficam só neste navegador. Exporte um backup para guardar ou levar a outro aparelho.
+            {sincronizacao.sync.ativo ? 'Os dados estão sincronizados (quadro acima). O backup (.json) continua sendo a sua cópia independente.' : 'Seus dados ficam só neste navegador. Ative a sincronização acima ou exporte um backup para levar a outro aparelho.'}
           </p>
           <div className="campos">
             <label className="campo">

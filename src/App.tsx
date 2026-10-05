@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useDados } from './armazenamento';
 import { useCdiOnline } from './cdiOnline';
+import { rotuloSync } from './components/CartaoSincronizacao';
 import { montarLinhas } from './domain/carteira';
 import { hojeISO } from './domain/datas';
 import Aportes from './pages/Aportes';
@@ -8,6 +9,7 @@ import Instituicoes from './pages/Instituicoes';
 import Painel from './pages/Painel';
 import Parametros from './pages/Parametros';
 import Simulador from './pages/Simulador';
+import { useSincronizacao } from './sincronizacao';
 
 const PAGINAS = ['Painel', 'Aportes', 'Instituições', 'Simulador', 'Parâmetros'] as const;
 export type Pagina = (typeof PAGINAS)[number];
@@ -23,6 +25,8 @@ export default function App() {
   const hoje = hojeISO();
   const linhas = useMemo(() => montarLinhas(dados.aportes, hoje, dados.parametros), [dados, hoje]);
   const { estadoCdi, atualizarCdi } = useCdiOnline(dados, atualizar, hoje);
+  const sincronizacao = useSincronizacao(dados, substituir);
+  const { sync } = sincronizacao;
 
   const ir = (p: Pagina) => {
     setPagina(p);
@@ -48,6 +52,11 @@ export default function App() {
               </button>
             ))}
           </nav>
+          {sync.ativo && (
+            <button className={`sync-estado s-${sync.status}`} onClick={() => ir('Parâmetros')} title="Sincronização entre aparelhos">
+              {rotuloSync(sync.status)}
+            </button>
+          )}
         </div>
       </header>
       <main>
@@ -56,9 +65,9 @@ export default function App() {
         {pagina === 'Aportes' && <Aportes linhas={linhas} parametros={dados.parametros} hoje={hoje} atualizar={atualizar} />}
         {pagina === 'Instituições' && <Instituicoes linhas={linhas} parametros={dados.parametros} />}
         {pagina === 'Simulador' && <Simulador parametros={dados.parametros} linhas={linhas} hoje={hoje} />}
-        {pagina === 'Parâmetros' && <Parametros dados={dados} atualizar={atualizar} substituir={substituir} hoje={hoje} estadoCdi={estadoCdi} atualizarCdi={atualizarCdi} />}
+        {pagina === 'Parâmetros' && <Parametros dados={dados} atualizar={atualizar} substituir={substituir} hoje={hoje} estadoCdi={estadoCdi} atualizarCdi={atualizarCdi} sincronizacao={sincronizacao} />}
         <p className="rodape">
-          Rendimento já decorrido usa o CDI realizado publicado pelo Banco Central; valores futuros são estimativas com o CDI de projeção e não garantem rentabilidade. Seus dados ficam apenas neste navegador.
+          Rendimento já decorrido usa o CDI realizado publicado pelo Banco Central; valores futuros são estimativas com o CDI de projeção e não garantem rentabilidade. {sync.ativo ? 'Dados sincronizados entre aparelhos, criptografados com a sua frase-senha.' : 'Seus dados ficam apenas neste navegador.'}
         </p>
       </main>
     </>
