@@ -40,7 +40,7 @@ npm run build   # gera dist/
 
 ## Publicar
 
-Publicado no **Netlify** (`netlify.toml`): o build roda os testes do motor, gera `dist/` e configura o proxy `/anbima/*`. O workflow `.github/workflows/ci.yml` roda testes e build a cada push no GitHub.
+Publicado em **https://rendller.netlify.app/** pelo **Netlify** (`netlify.toml`): o build roda os testes do motor, gera `dist/` e configura o proxy `/anbima/*`. O workflow `.github/workflows/ci.yml` roda testes e build a cada push no GitHub.
 
 Para publicar uma versão a partir do computador: `npx netlify-cli deploy --build --prod`. Com o repositório conectado ao Netlify (*Add new site → Import an existing project → GitHub*), cada push publica sozinho.
 

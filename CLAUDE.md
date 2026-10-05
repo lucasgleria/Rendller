@@ -161,6 +161,6 @@ Os valores esperados foram conferidos por um cálculo independente (CDI 13,90% a
 
 ## 11. Pendências conhecidas
 
-- Deploy no Netlify (`netlify.toml`), decidido pelo usuário em 04/10/2026. O GitHub Actions só roda CI.
+- Deploy no Netlify em https://rendller.netlify.app/ (`netlify.toml`), decidido pelo usuário em 04/10/2026. O GitHub Actions só roda CI.
 - O CDI padrão (13,90%, da planilha) só vale até a primeira consulta ao Banco Central; depois o CDI de projeção acompanha o último CDI publicado.
 - IPCA projetado continua manual (estimativa informada pelo usuário).
