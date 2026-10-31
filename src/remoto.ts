@@ -27,3 +27,19 @@ export interface Cifra {
   cifrar(dados: unknown): Promise<Envelope>;
   decifrar(e: Envelope): Promise<unknown>;
 }
+
+/** O serviço da nuvem não respondeu (projeto pausado, erro 5xx ou sem rede): o app segue no `localStorage`. */
+export class NuvemIndisponivel extends Error {
+  constructor() {
+    super('Nuvem indisponível (o projeto pode estar pausado).');
+    this.name = 'NuvemIndisponivel';
+  }
+}
+
+/** A sessão da conta acabou: é preciso entrar de novo; nada local é tocado. */
+export class SessaoExpirada extends Error {
+  constructor() {
+    super('Entre na conta de novo. Os dados deste aparelho continuam aqui e são enviados depois.');
+    this.name = 'SessaoExpirada';
+  }
+}

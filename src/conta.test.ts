@@ -1,0 +1,205 @@
+import { describe, expect, it } from 'vitest';
+import { derivarChaveDaConta, derivarCredenciais } from './cofre';
+import { contaDisponivel, lerCofreDaConta, recuperacaoNaUrl, remotoDaConta } from './conta';
+import { BancoFalso, clienteFalso, novoUid } from './conta.falso';
+import { novoAporte, parametrosPadrao } from './domain/padroes';
+import { impressao, paraNuvem } from './domain/sincronia';
+import type { Dados } from './domain/types';
+import { NuvemIndisponivel, SessaoExpirada } from './remoto';
+import { contratoRemoto } from './remoto.contrato';
+import {
+  bloqueioDaConta,
+  cicloRemoto,
+  classificarFalha,
+  escolherConfig,
+  lerConfigSalva,
+  lerContaSalva,
+  MENSAGEM_FRASE_DIFERENTE,
+  prepararAtivacao,
+  type ConfigSync,
+} from './sincronizacaoNucleo';
+
+const FRASE = 'cavalo bateria grampo correto';
+
+function dados(n = 1): Dados {
+  return {
+    versao: 2,
+    aportes: Array.from({ length: n }, (_, i) => novoAporte({ id: `a${i}`, emissor: 'PagBank', valor: 500, dataAporte: '2026-08-19', vencimento: '2028-08-10' })),
+    parametros: parametrosPadrao(),
+  };
+}
+
+/** Chave aleatória (sem PBKDF2, rápida) para o contrato. */
+function chaveAleatoria(id: string) {
+  return { id, chave: btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32)))) };
+}
+
+describe('conta no Supabase (ClienteCofre falso)', () => {
+  contratoRemoto(
+    'conta',
+    async () => {
+      const uid = novoUid();
+      return remotoDaConta(clienteFalso(new BancoFalso(), () => uid), chaveAleatoria(uid));
+    },
+    async () => {
+      const banco = new BancoFalso();
+      const uid = novoUid();
+      const chave = chaveAleatoria(uid);
+      return { certo: remotoDaConta(clienteFalso(banco, () => uid), chave), errado: remotoDaConta(clienteFalso(banco, () => null), chave) };
+    },
+  );
+
+  it('RLS do falso: outra conta não lê nem apaga a linha', async () => {
+    const banco = new BancoFalso();
+    const [a, b] = [novoUid(), novoUid()];
+    const ra = remotoDaConta(clienteFalso(banco, () => a), chaveAleatoria(a));
+    await ra.gravar(0, await ra.cifrar({ n: 1 }));
+    const rb = remotoDaConta(clienteFalso(banco, () => b), chaveAleatoria(b));
+    expect(await rb.ler()).toEqual({ tipo: 'inexistente' });
+    await rb.apagar();
+    expect(await ra.ler()).toMatchObject({ tipo: 'ok', versao: 1 });
+  });
+
+  it('mesma frase em contas diferentes gera chaves diferentes e não decifra cruzado', async () => {
+    const [a, b] = [novoUid(), novoUid()];
+    const [ka, kb] = await Promise.all([derivarChaveDaConta(FRASE, a), derivarChaveDaConta(FRASE, b)]);
+    expect(ka.id).toBe(a);
+    expect(ka.chave).not.toBe(kb.chave);
+    const banco = new BancoFalso();
+    const ra = remotoDaConta(clienteFalso(banco, () => a), ka);
+    const rb = remotoDaConta(clienteFalso(banco, () => b), kb);
+    const e = await ra.cifrar(dados(2));
+    expect(await ra.decifrar(e)).toEqual(JSON.parse(JSON.stringify(dados(2))));
+    await expect(rb.decifrar(e)).rejects.toThrow();
+    // mesma chave com outro id (dado autenticado) também não decifra
+    await expect(remotoDaConta(clienteFalso(banco, () => b), { id: b, chave: ka.chave }).decifrar(e)).rejects.toThrow();
+  });
+
+  it('chave da conta difere da chave do cofre antigo para a mesma frase', async () => {
+    const [antiga, conta] = await Promise.all([derivarCredenciais(FRASE), derivarChaveDaConta(FRASE, novoUid())]);
+    expect(conta.chave).not.toBe(antiga.chave);
+    await expect(derivarChaveDaConta('curta', novoUid())).rejects.toThrow(/12 caracteres/);
+  });
+
+  it('frase errada numa conta com dados: erro de decifração e nenhuma gravação', async () => {
+    const banco = new BancoFalso();
+    const uid = novoUid();
+    const cliente = clienteFalso(banco, () => uid);
+    const certa = remotoDaConta(cliente, chaveAleatoria(uid));
+    await certa.gravar(0, await certa.cifrar(paraNuvem(dados(3))));
+    banco.chamadas = [];
+    const [r, errada] = await Promise.all([lerCofreDaConta(cliente), Promise.resolve(remotoDaConta(cliente, chaveAleatoria(uid)))]);
+    await expect(prepararAtivacao(r, errada, dados(1), 'conta')).rejects.toThrow(MENSAGEM_FRASE_DIFERENTE);
+    expect(MENSAGEM_FRASE_DIFERENTE).toBe('Frase-senha diferente da usada nesta conta');
+    expect(banco.rpcs()).toBe(0);
+    // a frase certa encontra os dados
+    expect(await prepararAtivacao(r, certa, dados(1), 'conta')).toMatchObject({ tipo: 'existente', versao: 1 });
+  });
+
+  it("projeto pausado ou erro 5xx vira status 'offline' com a mensagem 'Nuvem indisponível'", async () => {
+    const banco = new BancoFalso();
+    const uid = novoUid();
+    const r = remotoDaConta(clienteFalso(banco, () => uid, { status: 503, error: { message: 'Service Unavailable', code: 'PGRST' } }), chaveAleatoria(uid));
+    await expect(r.ler()).rejects.toBeInstanceOf(NuvemIndisponivel);
+    await expect(r.gravar(0, await r.cifrar({}))).rejects.toBeInstanceOf(NuvemIndisponivel);
+    await expect(r.apagar()).rejects.toBeInstanceOf(NuvemIndisponivel);
+    const falha = await cicloRemoto({ origem: 'conta', versao: 1, impressao: 'x' }, r, { local: () => dados(1), aguardandoCofre: () => false, podeGravar: () => true }).catch((e) => e);
+    expect(classificarFalha(falha, true)).toEqual({ status: 'offline', erro: 'Nuvem indisponível (o projeto pode estar pausado).', precisaEntrar: false });
+    // falha de rede (fetch rejeitado, status 0) também
+    const semRede = remotoDaConta(clienteFalso(banco, () => uid, { status: 0, error: { message: 'TypeError: Failed to fetch' } }), chaveAleatoria(uid));
+    await expect(semRede.ler()).rejects.toBeInstanceOf(NuvemIndisponivel);
+  });
+
+  it("sessão expirada (401) com alteração pendente: status 'erro' com 'Entre na conta de novo' e os dados locais intactos", async () => {
+    const banco = new BancoFalso();
+    const uid = novoUid();
+    const certo = remotoDaConta(clienteFalso(banco, () => uid), chaveAleatoria(uid));
+    await certo.gravar(0, await certo.cifrar(paraNuvem(dados(1))));
+    banco.chamadas = [];
+    const local = dados(2); // editado aqui: pendente
+    const copia = JSON.parse(JSON.stringify(local));
+    const expirado = remotoDaConta(clienteFalso(banco, () => null), chaveAleatoria(uid));
+    const falha = await cicloRemoto({ origem: 'conta', versao: 1, impressao: impressao(dados(1)) }, expirado, {
+      local: () => local,
+      aguardandoCofre: () => false,
+      podeGravar: () => true,
+    }).catch((e) => e);
+    expect(falha).toBeInstanceOf(SessaoExpirada);
+    const c = classificarFalha(falha, true);
+    expect(c.status).toBe('erro');
+    expect(c.erro).toContain('Entre na conta de novo');
+    expect(c.precisaEntrar).toBe(true);
+    expect(banco.rpcs()).toBe(0);
+    expect(local).toEqual(copia);
+    expect(await certo.ler()).toMatchObject({ tipo: 'ok', versao: 1 });
+  });
+
+  it('frase-senha e chave nunca aparecem nas chamadas ao ClienteCofre', async () => {
+    const banco = new BancoFalso();
+    const uid = novoUid();
+    const cliente = clienteFalso(banco, () => uid);
+    const chave = await derivarChaveDaConta(FRASE, uid);
+    const r = remotoDaConta(cliente, chave);
+    await r.gravar(0, await r.cifrar(paraNuvem(dados(2))));
+    const lido = await lerCofreDaConta(cliente);
+    await prepararAtivacao(lido, r, dados(0), 'conta');
+    await cicloRemoto({ origem: 'conta', versao: 0, impressao: '' }, r, { local: () => dados(1), aguardandoCofre: () => false, podeGravar: () => true });
+    await r.gravar(1, await r.cifrar(paraNuvem(dados(5))));
+    await r.apagar();
+    expect(banco.chamadas.length).toBeGreaterThan(4);
+    const tudo = JSON.stringify(banco.chamadas);
+    for (const segredo of [FRASE, chave.chave, FRASE.normalize('NFKC')]) expect(tudo).not.toContain(segredo);
+    expect(tudo).not.toContain('PagBank'); // só conteúdo cifrado sai
+  });
+
+  it('ciclo relê podeGravar depois de decifrar (edição durante o download vira conflito)', async () => {
+    const banco = new BancoFalso();
+    const uid = novoUid();
+    const r0 = remotoDaConta(clienteFalso(banco, () => uid), chaveAleatoria(uid));
+    await r0.gravar(0, await r0.cifrar(paraNuvem(dados(3))));
+    let editou = false;
+    const r = { ...r0, decifrar: async (e: Parameters<typeof r0.decifrar>[0]) => ((editou = true), r0.decifrar(e)) };
+    const passo = await cicloRemoto({ origem: 'conta', versao: 1, impressao: 'outra' }, r, {
+      local: () => dados(editou ? 2 : 0),
+      aguardandoCofre: () => true, // dados locais ilegíveis ao abrir
+      podeGravar: () => editou,
+    });
+    expect(passo.acao).toBe('conflito');
+  });
+});
+
+describe('configs da conta e do cofre antigo', () => {
+  const conta: ConfigSync = { origem: 'conta', userId: novoUid(), email: 'eu@exemplo.com', chave: 'Y2hhdmU=', versao: 2, impressao: 'i', ultimaSync: '' };
+  const antiga = { cred: { id: 'a'.repeat(64), token: 'b'.repeat(64), chave: 'Y2hhdmU=' }, versao: 1, impressao: 'j', ultimaSync: '' };
+
+  it('a config da conta é lida da própria chave, com origem conta', () => {
+    const { origem: _, ...salva } = conta;
+    expect(lerContaSalva(JSON.stringify(salva))).toEqual(conta);
+    expect(lerContaSalva(null)).toBeNull();
+    expect(lerContaSalva('{quebrado')).toBeNull();
+    expect(lerContaSalva(JSON.stringify({ userId: 'x' }))).toBeNull();
+  });
+
+  it('com as duas presentes, a conta tem prioridade', () => {
+    const a = lerConfigSalva(JSON.stringify(antiga));
+    expect(escolherConfig(a, conta)).toBe(conta);
+    expect(escolherConfig(a, null)).toBe(a);
+    expect(escolherConfig(null, null)).toBeNull();
+  });
+
+  it('não ativa a conta com o cofre antigo ligado', () => {
+    expect(bloqueioDaConta(lerConfigSalva(JSON.stringify(antiga)))).toBe('A migração do cofre antigo vem na próxima versão; por enquanto mantenha um só.');
+    expect(bloqueioDaConta(null)).toBeNull();
+  });
+});
+
+describe('cliente da conta', () => {
+  it('sem as variáveis do Supabase a conta não está disponível', () => {
+    expect(contaDisponivel()).toBe(false);
+  });
+  it('reconhece o link de recuperação de senha na URL', () => {
+    expect(recuperacaoNaUrl('#access_token=x&expires_in=3600&type=recovery')).toBe(true);
+    expect(recuperacaoNaUrl('#Painel')).toBe(false);
+    expect(recuperacaoNaUrl('')).toBe(false);
+  });
+});

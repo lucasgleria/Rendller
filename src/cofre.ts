@@ -37,15 +37,29 @@ function deBase64(s: string): Uint8Array<ArrayBuffer> {
 
 const hex = (b: ArrayBuffer) => [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, '0')).join('');
 
-export async function derivarCredenciais(frase: string): Promise<Credenciais> {
+/** PBKDF2 da frase com o sal dado, seguido de HKDF: devolve a função que deriva cada subchave por `info`. */
+async function derivador(frase: string, sal: string) {
   const normalizada = frase.normalize('NFKC').trim();
   if (normalizada.length < TAMANHO_MINIMO_FRASE) throw new Error(`Use uma frase-senha com pelo menos ${TAMANHO_MINIMO_FRASE} caracteres.`);
   const base = await crypto.subtle.importKey('raw', enc.encode(normalizada), 'PBKDF2', false, ['deriveBits']);
-  const mestre = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: enc.encode(SAL), iterations: ITERACOES }, base, 256);
+  const mestre = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: enc.encode(sal), iterations: ITERACOES }, base, 256);
   const hk = await crypto.subtle.importKey('raw', mestre, 'HKDF', false, ['deriveBits']);
-  const sub = (info: string) => crypto.subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(0), info: enc.encode(info) }, hk, 256);
+  return (info: string) => crypto.subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(0), info: enc.encode(info) }, hk, 256);
+}
+
+export async function derivarCredenciais(frase: string): Promise<Credenciais> {
+  const sub = await derivador(frase, SAL);
   const [id, token, chave] = await Promise.all([sub('id'), sub('token'), sub('aes-gcm')]);
   return { id: hex(id), token: hex(token), chave: paraBase64(chave) };
+}
+
+/**
+ * Chave do cofre da conta (ADR-0003): sal ligado ao id da conta, então a mesma frase gera chaves diferentes em
+ * contas diferentes e no cofre antigo. O id da conta é o dado autenticado do AES-GCM. A frase nunca sai daqui.
+ */
+export async function derivarChaveDaConta(frase: string, userId: string): Promise<{ id: string; chave: string }> {
+  const sub = await derivador(frase, `rendller:conta:v1:${userId}`);
+  return { id: userId, chave: paraBase64(await sub('aes-gcm')) };
 }
 
 /** Só o que a cifra usa: o id (dado autenticado) e a chave. */
@@ -115,7 +129,8 @@ export function remotoCofreAntigo(c: Credenciais): Remoto & Cifra {
     ler: () => lerCofre(c),
     gravar: (base, e) => gravarCofre(c, base, e),
     apagar: async () => {
-      await apagarCofre(c);
+      const r = await apagarCofre(c);
+      if (r.tipo !== 'ok' && r.tipo !== 'inexistente') throw new Error('O servidor recusou apagar o cofre.');
     },
     cifrar: (dados) => cifrar(c, dados),
     decifrar: (e) => decifrar(c, e),

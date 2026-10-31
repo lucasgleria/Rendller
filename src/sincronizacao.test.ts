@@ -6,7 +6,7 @@ import { novoAporte, parametrosPadrao } from './domain/padroes';
 import { migrarDados } from './domain/migracao';
 import { aguardandoDepois, ajustarImpressaoAposNormalizacao, daNuvem, decidirCiclo, impressao, jsonEstavel, paraNuvem, planejarCiclo } from './domain/sincronia';
 import { contratoRemoto } from './remoto.contrato';
-import { lerConfigSalva } from './sincronizacao';
+import { lerConfigSalva } from './sincronizacaoNucleo';
 import type { Dados } from './domain/types';
 
 const FRASE = 'cavalo bateria grampo correto';
@@ -319,7 +319,14 @@ describe('cofre antigo como Remoto', () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  contratoRemoto('cofre antigo', async () => remotoCofreAntigo(credenciaisAleatorias()));
+  contratoRemoto(
+    'cofre antigo',
+    async () => remotoCofreAntigo(credenciaisAleatorias()),
+    async () => {
+      const cred = credenciaisAleatorias();
+      return { certo: remotoCofreAntigo(cred), errado: remotoCofreAntigo({ ...cred, token: credenciaisAleatorias().token }) };
+    },
+  );
 
   it('fluxo "dois aparelhos" pelo Remoto dá o mesmo resultado das chamadas diretas', async () => {
     const celular = await derivarCredenciais(FRASE);

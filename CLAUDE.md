@@ -40,7 +40,11 @@ Antes de dizer que uma mudança está pronta, rode `npm test` e `npm run build`.
 | `src/domain/sincronia.ts` | O que sincroniza (`paraNuvem`), aplicação dos dados remotos (`daNuvem`), impressão digital |
 | `src/cofre.ts` | Criptografia da sincronização (PBKDF2 → HKDF → id, token, chave AES-GCM), chamadas a `/api/cofre` e o cofre antigo como `Remoto` (`remotoCofreAntigo`) |
 | `src/remoto.ts`, `src/remoto.contrato.ts` | Interfaces `Remoto` e `Cifra` do cofre de sincronização; contrato de teste compartilhado (só testes importam) |
+| `src/conta.ts` | Conta no Supabase: cliente carregado sob demanda (`import()` único), entrar, sair, esqueci a senha, nova senha, e o cofre da conta como `Remoto` (`remotoDaConta` sobre `ClienteCofre`) |
+| `src/conta.falso.ts` | `ClienteCofre` falso com a semântica do SQL (só testes importam) |
+| `src/sincronizacaoNucleo.ts` | Núcleo sem React: configs (`rendller:sync:v1` cofre antigo, `rendller:conta:v1` conta), ciclo, ativação e classificação de falhas |
 | `src/sincronizacao.ts` | Hook de sincronização (só efeitos: fila, estado, timers) sobre `Remoto & Cifra`; decisões puras em `domain/sincronia.ts` (`planejarCiclo`, `decidirCiclo`) |
+| `supabase/migrations/`, `supabase/verificacao.sql` | Tabela `cofres` com RLS, `gravar_cofre()` com controle de versão, `ping()`; consultas de verificação manual |
 | `netlify/cofre.ts`, `netlify/functions/cofre.mts` | Servidor do cofre (Netlify Function + Netlify Blobs); guarda só conteúdo cifrado |
 | `netlify.toml` | Build, proxy da ANBIMA e cabeçalhos do deploy no Netlify |
 | `src/pages/*.tsx` | Telas: Painel, Aportes, Instituições, Simulador, Parâmetros |
@@ -55,6 +59,7 @@ Regras de arquitetura:
 - Percentuais e taxas são guardados em decimal (103% do CDI = `1.03`; 12% a.a. = `0.12`).
 - Os dados ficam no navegador (`localStorage`) e, se o usuário ativar, sincronizam entre aparelhos por um **cofre cifrado de ponta a ponta** (decisão do usuário em 04/10/2026, substituindo "só no navegador"). A frase-senha nunca sai do navegador; o servidor recebe só id, token e conteúdo AES-GCM. Sem a frase não há recuperação: o backup .json continua existindo. Mudanças no formato de `Dados` precisam continuar lendo backups, dados antigos e cofres já gravados: `normalizarParametros()` (em `padroes.ts`) mescla parâmetros novos com os padrões e migra dados antigos.
 - O histórico do CDI e, com `cdiAutomatico`, o CDI de projeção **não** sincronizam (são públicos e cada aparelho baixa os seus); assim a atualização diária do CDI não gera conflito. Conflito real (os dois lados mudaram) nunca sobrescreve sozinho: o usuário escolhe, e a versão local descartada fica em `rendller:copia-antes-da-nuvem`.
+- **A conta identifica, a frase-senha cifra** (ADR-0003): a senha da conta (Supabase Auth) só autoriza o acesso à linha da conta e nunca é guardada pelo app; a chave vem da frase-senha com sal ligado ao id da conta, e o id da conta é o dado autenticado do AES-GCM. O Supabase guarda só o envelope cifrado. Sem `VITE_SUPABASE_URL` e `VITE_SUPABASE_PUBLISHABLE_KEY` no build, nada de conta aparece. Conta e cofre antigo têm configs separadas; com as duas, a conta sincroniza; por ora a conta não é ativada com o cofre antigo ligado.
 - Rede só para dados públicos (CDI do Banco Central, calendário ANBIMA) e para o cofre cifrado. Dado do usuário nunca sai do navegador sem criptografia. Busca de rede fica fora de `src/domain/`; o domínio recebe os dados já baixados.
 
 ## 3. Regras de ouro
