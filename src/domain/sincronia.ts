@@ -15,7 +15,8 @@ export function paraNuvem(d: Dados): Dados {
     delete parametros.cdiData;
     delete parametros.cdiFonte;
   }
-  return { versao: 2, aportes: d.aportes, parametros: parametros as Parametros };
+  // `versao` vem do próprio objeto: aplicado ao bruto v1, reproduz a impressão que o app antigo assinou.
+  return { versao: d.versao, aportes: d.aportes, parametros: parametros as Parametros };
 }
 
 /**
@@ -54,4 +55,29 @@ export function impressao(d: Dados): string {
     h2 = Math.imul(h2 ^ c, 0x5bd1e995);
   }
   return `${(h1 >>> 0).toString(16)}${(h2 >>> 0).toString(16)}:${s.length}`;
+}
+
+/**
+ * Depois da migração v1 → v2 a impressão muda só pelo formato. Se a config assinou exatamente os dados v1
+ * (sem edição pendente), passa a assinar os mesmos dados já migrados; senão fica como está (a edição segue pendente).
+ */
+export function ajustarImpressaoAposMigracao<C extends { impressao: string }>(config: C, brutoV1: unknown, migrados: Dados): C {
+  return config.impressao === impressao(brutoV1 as Dados) ? { ...config, impressao: impressao(migrados) } : config;
+}
+
+export interface SituacaoCiclo {
+  versaoLocal: number; // última versão do cofre que este aparelho conhece
+  versaoRemota: number;
+  pendente: boolean; // dados locais mudaram desde a última sincronização
+  ilegivel: boolean; // dados locais ilegíveis ao abrir e o cofre ainda não foi baixado
+  editadoDesdeIlegivel: boolean;
+  remotoIgualLocal?: boolean; // conteúdo da nuvem já decifrado e igual ao local
+}
+
+/** O que fazer num ciclo de sincronização. Nunca envia por cima do cofre quando os dados locais eram ilegíveis. */
+export function decidirCiclo(s: SituacaoCiclo): 'aplicar' | 'enviar' | 'conflito' | 'nada' {
+  if (s.remotoIgualLocal) return 'aplicar';
+  if (s.ilegivel) return s.editadoDesdeIlegivel ? 'conflito' : 'aplicar';
+  if (s.versaoRemota !== s.versaoLocal) return s.pendente ? 'conflito' : 'aplicar';
+  return s.pendente ? 'enviar' : 'nada';
 }

@@ -5,7 +5,7 @@ import type { Linha } from '../domain/carteira';
 import { Calendario } from '../domain/datas';
 import { CLASSES, INDEXADORES, LIQUIDEZES, STATUS_MANUAIS, novoAporte } from '../domain/padroes';
 import type { Aporte, Dados, Parametros, Status } from '../domain/types';
-import { data, moeda, pct, rotuloAporte } from '../formato';
+import { data, moeda, pct, rotuloAporte, rotuloClasse } from '../formato';
 
 interface Props {
   linhas: Linha[];
@@ -91,7 +91,7 @@ export default function Aportes({ linhas, parametros, hoje, atualizar }: Props) 
                 <tr key={l.aporte.id} className="clicavel" onClick={() => setEditando(l.aporte)}>
                   <td>
                     {data(l.aporte.dataAporte)}
-                    <div className="linha2">{l.aporte.produto ? `${l.aporte.produto} · ${l.aporte.classe}` : rotuloAporte(l.aporte)}</div>
+                    <div className="linha2">{l.aporte.produto ? `${l.aporte.produto} · ${rotuloClasse(l.aporte.classe)}` : rotuloAporte(l.aporte)}</div>
                     {l.aporte.divisao && (
                       <div className="linha2">
                         {pct(l.aporte.divisao.fracao, 1)} de {moeda(l.aporte.divisao.valorOriginal)} · dividido em {data(l.aporte.divisao.data)}
