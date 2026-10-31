@@ -31,9 +31,10 @@ Antes de dizer que uma mudança está pronta, rode `npm test` e `npm run build`.
 | `src/domain/calculo.ts` | Motor: fator bruto por indexador, IOF, IR, `avaliar()`, `validarAporte()` |
 | `src/domain/carteira.ts` | Linhas com status e alertas, agrupamento por instituição/FGC, resumo, série de projeção |
 | `src/domain/padroes.ts` | Parâmetros padrão (tabelas de IR/IOF, FGC, CDI inicial) e listas de opções |
+| `src/domain/migracao.ts` | `migrarDados()`: lê `Dados` v1 e v2 (para sempre) e devolve v2; recusa versão mais nova |
 | `src/domain/importacao.ts` | Importação da planilha .xlsx (abas `Aportes` e `Config`), do calendário ANBIMA (.xls) e validação de backup |
 | `src/domain/calculo.test.ts` | Testes obrigatórios (seção 6) |
-| `src/armazenamento.ts` | Persistência em `localStorage` (chave `rendller:dados:v1`) e download de arquivos |
+| `src/armazenamento.ts` | Persistência em `localStorage` (chave `rendller:dados:v2`; a `rendller:dados:v1` só é lida, nunca apagada; conteúdo ilegível vai para `rendller:dados:ilegivel`) e download de arquivos |
 | `src/servicos.ts` | Rede: API do Banco Central (CDI) e proxy `/anbima/*` (calendário) |
 | `src/cdiOnline.ts` | Hook que atualiza o CDI ao abrir o app (uma vez por dia) e sob demanda |
 | `src/domain/sincronia.ts` | O que sincroniza (`paraNuvem`), aplicação dos dados remotos (`daNuvem`), impressão digital |
@@ -124,6 +125,7 @@ Qualquer mudança no motor precisa manter (e, se for regra nova, ganhar) testes 
 - [ ] Resgate parcial (divisão proporcional, contagem tributária mantida, soma das partes = lote original)
 - [ ] CDI realizado (dias com dado usam o CDI do dia, lacunas e futuro usam a projeção, fim de semana/feriado ignorados)
 - [ ] Calendário ANBIMA embutido = regra dos feriados nacionais (2001–2099); migração da lista antiga
+- [ ] Formato salvo (`src/domain/migracao.test.ts`, `src/armazenamento.test.ts`): v1 → v2 sem perder aporte nem mudar números, recusa de versão futura, conteúdo ilegível guardado e nunca sobrescrito
 - [ ] Sincronização (`src/sincronizacao.test.ts`): criptografia, o que sincroniza, servidor (autorização, versão, gravação simultânea), dois aparelhos
 
 Os valores esperados foram conferidos por um cálculo independente (CDI 13,90% a.a., feriados nacionais). Valide valores novos por um segundo caminho antes de gravá-los no teste; não ajuste o esperado só para o teste passar. Checagens de sanidade: rendimento ≥ 0, líquido < bruto, IR na faixa certa, IOF zero a partir de 30 dias.

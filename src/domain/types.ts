@@ -1,7 +1,8 @@
 /** Datas sempre em ISO `aaaa-mm-dd` (sem fuso). */
 export type ISODate = string;
 
-export type Tipo = 'CDB Pós-fixado' | 'CDB Prefixado' | 'CDB IPCA+' | 'Outro renda fixa';
+/** Classe de ativo: a espécie do título, que define o regime tributário. Não diz como o título rende (isso é o `Indexador`). */
+export type Classe = 'CDB' | 'Outro';
 export type Indexador = 'CDI' | 'PRE' | 'IPCA';
 export type Liquidez = 'Diária' | 'No vencimento' | 'Após carência' | 'Outra';
 /** Status informado pelo usuário. `Ativo` vira `Vencido` automaticamente após o vencimento. */
@@ -35,7 +36,7 @@ export interface Aporte {
   emissor: string; // banco emissor do título
   conglomerado: string; // para FGC; vazio = usa o emissor
   produto: string;
-  tipo: Tipo;
+  classe: Classe;
   observacoes: string;
   // Aporte
   dataAporte: ISODate;
@@ -67,6 +68,15 @@ export interface CdiDia {
   anual: number;
 }
 
+/** Regras fiscais e de garantia de uma classe de ativo. Vêm de `Parametros`, nunca do código de cálculo. */
+export interface RegimeTributario {
+  ir: 'regressivo' | 'isento';
+  iof: boolean;
+  fgc: boolean;
+  carenciaMinimaDias: number; // dias corridos; 0 = sem mínimo
+  fonte: string; // de onde veio a regra, com data
+}
+
 export interface FaixaIR {
   aPartirDeDias: number; // dias corridos
   aliquota: number;
@@ -91,6 +101,8 @@ export interface Parametros {
   tabelaIR: FaixaIR[];
   /** índice 0 = dia 1 … índice 29 = dia 30 (0%). */
   tabelaIOF: number[];
+  /** Regime tributário de cada classe de ativo. */
+  regimes: Record<Classe, RegimeTributario>;
   fgcLimitePorInstituicao: number;
   fgcLimiteGlobal4Anos: number;
   /** fração do limite do FGC a partir da qual o alerta de concentração dispara */
@@ -104,8 +116,9 @@ export interface Parametros {
   premissasFonte: string;
 }
 
+/** Formato salvo. A versão 1 (com `Aporte.tipo`) continua sendo lida por `migrarDados()`. */
 export interface Dados {
-  versao: 1;
+  versao: 2;
   aportes: Aporte[];
   parametros: Parametros;
 }

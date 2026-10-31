@@ -20,12 +20,12 @@ function paginaInicial(): Pagina {
 }
 
 export default function App() {
-  const { dados, atualizar, substituir, erroGravacao } = useDados();
+  const { dados, atualizar, atualizarAuto, substituir, erroGravacao, ilegivel } = useDados();
   const [pagina, setPagina] = useState<Pagina>(paginaInicial);
   const hoje = hojeISO();
   const linhas = useMemo(() => montarLinhas(dados.aportes, hoje, dados.parametros), [dados, hoje]);
-  const { estadoCdi, atualizarCdi } = useCdiOnline(dados, atualizar, hoje);
-  const sincronizacao = useSincronizacao(dados, substituir);
+  const { estadoCdi, atualizarCdi } = useCdiOnline(dados, atualizarAuto, hoje);
+  const sincronizacao = useSincronizacao(dados, substituir, ilegivel);
   const { sync } = sincronizacao;
 
   const ir = (p: Pagina) => {
@@ -60,6 +60,7 @@ export default function App() {
         </div>
       </header>
       <main>
+        {ilegivel && <div className="aviso vermelho">Dados salvos ilegíveis; cópia guardada. Restaure um backup.</div>}
         {erroGravacao && <div className="aviso vermelho">Não consegui salvar neste navegador (modo privado ou armazenamento cheio). Exporte um backup em Parâmetros.</div>}
         {pagina === 'Painel' && <Painel linhas={linhas} parametros={dados.parametros} hoje={hoje} ir={ir} estadoCdi={estadoCdi} />}
         {pagina === 'Aportes' && <Aportes linhas={linhas} parametros={dados.parametros} hoje={hoje} atualizar={atualizar} />}

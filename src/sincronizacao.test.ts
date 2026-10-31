@@ -10,7 +10,7 @@ const FRASE = 'cavalo bateria grampo correto';
 
 function dados(n = 1): Dados {
   return {
-    versao: 1,
+    versao: 2,
     aportes: Array.from({ length: n }, (_, i) => novoAporte({ id: `a${i}`, emissor: 'PagBank', valor: 500, dataAporte: '2026-08-19', vencimento: '2028-08-10' })),
     parametros: parametrosPadrao(),
   };
@@ -89,6 +89,23 @@ describe('o que sincroniza', () => {
     expect(r.parametros.cdiAnual).toBe(0.1365);
     expect(r.parametros.feriados.length).toBeGreaterThan(1000);
     expect(() => daNuvem({ lixo: true }, local)).toThrow();
+  });
+  it('daNuvem aceita conteúdo v1 do cofre antigo e devolve v2', () => {
+    // Conteúdo como o app anterior gravava: versao 1, aportes com `tipo`, parâmetros sem `regimes`.
+    const antigo = JSON.parse(JSON.stringify(paraNuvem(dados(2))));
+    antigo.versao = 1;
+    delete antigo.parametros.regimes;
+    for (const a of antigo.aportes) {
+      delete a.classe;
+      a.tipo = 'CDB Pós-fixado';
+    }
+    const r = daNuvem(antigo, dados(0));
+    expect(r.versao).toBe(2);
+    expect(r.aportes.map((a) => a.id)).toEqual(['a0', 'a1']);
+    expect(r.aportes.every((a) => a.classe === 'CDB' && !('tipo' in a))).toBe(true);
+    expect(r.parametros.regimes.CDB).toEqual(parametrosPadrao().regimes.CDB);
+    expect(paraNuvem(r).versao).toBe(2);
+    expect(() => daNuvem({ ...antigo, versao: 3 }, dados(0))).toThrow(/versão mais nova do app/);
   });
   it('JSON estável não depende da ordem das chaves', () => {
     expect(jsonEstavel({ b: 1, a: [{ d: 2, c: undefined, e: null }] })).toBe(jsonEstavel({ a: [{ e: null, d: 2 }], b: 1 }));

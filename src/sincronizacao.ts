@@ -62,8 +62,10 @@ function semRede(e: unknown): boolean {
  * Sincroniza os dados entre aparelhos por um cofre cifrado (ver `cofre.ts`). Busca a versão da nuvem ao abrir,
  * ao voltar para a aba, ao reconectar e a cada 2 minutos; envia as alterações locais 1,5 s depois da última edição.
  * Se os dois lados mudaram, nada é sobrescrito: o usuário escolhe qual versão fica.
+ * Com `semEnvio` (dados locais ilegíveis e ainda não editados), nada é enviado automaticamente: o vazio local
+ * não pode ir por cima do cofre; uma versão mais nova da nuvem ainda é aplicada.
  */
-export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void) {
+export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, semEnvio = false) {
   const [config, setConfigEstado] = useState<ConfigSync | null>(lerConfig);
   const [status, setStatus] = useState<StatusSync>(() => (lerConfig() ? 'sincronizando' : 'desligado'));
   const [erro, setErro] = useState<string | null>(null);
@@ -72,6 +74,8 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void) {
   const configRef = useRef(config);
   const dadosRef = useRef(dados);
   dadosRef.current = dados;
+  const semEnvioRef = useRef(semEnvio);
+  semEnvioRef.current = semEnvio;
   const fila = useRef<Promise<void>>(Promise.resolve());
   const conflitoRef = useRef(conflito);
   conflitoRef.current = conflito;
@@ -136,7 +140,7 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void) {
       if (r.tipo === 'negado') throw new Error('A nuvem recusou o acesso deste aparelho. Desative e ative a sincronização de novo.');
       if (r.tipo === 'inexistente') throw new Error('Os dados não existem mais na nuvem (foram apagados em outro aparelho?). Desative e ative de novo para recriar.');
       if (r.tipo !== 'ok') return;
-      const pendente = impressao(dadosRef.current) !== c.impressao;
+      const pendente = !semEnvioRef.current && impressao(dadosRef.current) !== c.impressao;
       if (r.versao !== c.versao && r.envelope) {
         const remoto = daNuvem(await decifrar(c.cred, r.envelope), dadosRef.current);
         if (!pendente || impressao(remoto) === impressao(dadosRef.current)) {
@@ -164,11 +168,11 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void) {
   // Alteração local → envia depois de uma pausa nas edições.
   useEffect(() => {
     const c = configRef.current;
-    if (!c || conflitoRef.current || impressao(dados) === c.impressao) return;
+    if (!c || conflitoRef.current || semEnvio || impressao(dados) === c.impressao) return;
     setStatus((s) => (s === 'offline' || s === 'erro' ? s : 'pendente'));
     const t = setTimeout(() => void sincronizar(), ESPERA_ENVIO_MS);
     return () => clearTimeout(t);
-  }, [dados, sincronizar]);
+  }, [dados, semEnvio, sincronizar]);
 
   // Ao abrir, ao voltar para a aba, ao reconectar e periodicamente.
   useEffect(() => {
