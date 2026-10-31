@@ -22,9 +22,11 @@ let cliente: Promise<SupabaseClient> | null = null;
 export function clienteSupabase(): Promise<SupabaseClient> {
   if (!contaDisponivel()) return Promise.reject(new Error('A conta não está configurada nesta versão do app.'));
   cliente ??= import('@supabase/supabase-js').then((m) =>
-    // fluxo padrão (PKCE); a recuperação de senha chega por token_hash na query e é tratada pelo app
-    // (`confirmarRecuperacao`), então o cliente não lê nada da URL sozinho
-    m.createClient(URL_SUPABASE!, CHAVE_PUBLICAVEL!, { auth: { persistSession: true, detectSessionInUrl: false, autoRefreshToken: true } }),
+    // PKCE declarado (no auth-js 2.118 o padrão é implicit, que põe tokens no fragmento da URL). A recuperação de
+    // senha chega por token_hash na query e é tratada pelo app (`confirmarRecuperacao`): o cliente não lê a URL
+    m.createClient(URL_SUPABASE!, CHAVE_PUBLICAVEL!, {
+      auth: { flowType: 'pkce', persistSession: true, detectSessionInUrl: false, autoRefreshToken: true },
+    }),
   );
   return cliente;
 }
@@ -118,19 +120,43 @@ export function urlSemRecuperacao(href: string): string {
   return `${u.pathname}${busca ? `?${busca}` : ''}${hash}`;
 }
 
+export const MENSAGEM_RECUPERACAO_SEM_REDE = 'Sem conexão; abra o link de novo quando a internet voltar';
+
+/** Falha de rede (o link continua valendo) ou recusa do servidor (link vencido ou já usado)? */
+export function classificarErroRecuperacao(e: unknown): 'rede' | 'vencido' {
+  const x = e as { name?: string; status?: number } | null;
+  if (e instanceof TypeError || x?.name === 'AuthRetryableFetchError' || !x?.status) return 'rede';
+  return 'vencido';
+}
+
+/** Erro da recuperação: com `tipo: 'rede'`, a URL não é limpa para o usuário reabrir o link. */
+export class ErroRecuperacao extends Error {
+  constructor(readonly tipo: 'rede' | 'vencido') {
+    super(tipo === 'rede' ? MENSAGEM_RECUPERACAO_SEM_REDE : MENSAGEM_LINK_VENCIDO);
+    this.name = 'ErroRecuperacao';
+  }
+}
+
 let recuperacao: { token: string; promessa: Promise<void> } | null = null;
 
 /** Troca o token_hash do link por uma sessão de recuperação. Uma vez por token (o modo estrito do React chama 2×). */
 export function confirmarRecuperacao(tokenHash: string): Promise<void> {
   if (recuperacao?.token !== tokenHash) {
-    recuperacao = {
-      token: tokenHash,
-      promessa: clienteSupabase()
-        .then((c) => c.auth.verifyOtp({ type: 'recovery', token_hash: tokenHash }))
-        .then(({ error }) => {
-          if (error) throw new Error(MENSAGEM_LINK_VENCIDO);
-        }),
-    };
+    const promessa = clienteSupabase()
+      .then((c) => c.auth.verifyOtp({ type: 'recovery', token_hash: tokenHash }))
+      .then(
+        ({ error }) => {
+          if (error) throw new ErroRecuperacao(classificarErroRecuperacao(error));
+        },
+        (e: unknown) => {
+          throw e instanceof ErroRecuperacao ? e : new ErroRecuperacao(classificarErroRecuperacao(e));
+        },
+      )
+      .catch((e: ErroRecuperacao) => {
+        if (e.tipo === 'rede') recuperacao = null; // o link ainda vale: dá para tentar de novo
+        throw e;
+      });
+    recuperacao = { token: tokenHash, promessa };
   }
   return recuperacao.promessa;
 }

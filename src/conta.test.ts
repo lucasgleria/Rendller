@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { derivarChaveDaConta, derivarCredenciais } from './cofre';
-import { contaDisponivel, lerCofreDaConta, MENSAGEM_LINK_VENCIDO, recuperacaoNaUrl, remotoDaConta, sessaoDeResposta, urlSemRecuperacao } from './conta';
+import {
+  classificarErroRecuperacao,
+  contaDisponivel,
+  lerCofreDaConta,
+  MENSAGEM_LINK_VENCIDO,
+  MENSAGEM_RECUPERACAO_SEM_REDE,
+  recuperacaoNaUrl,
+  remotoDaConta,
+  sessaoDeResposta,
+  urlSemRecuperacao,
+} from './conta';
 import { BancoFalso, clienteFalso, novoUid } from './conta.falso';
 import { novoAporte, parametrosPadrao } from './domain/padroes';
 import { impressao, paraNuvem } from './domain/sincronia';
@@ -253,6 +263,14 @@ describe('cliente da conta', () => {
     // tokens no fragmento (fluxo implícito antigo) não são mais aceitos
     expect(recuperacaoNaUrl('', '#access_token=x&refresh_token=y&type=recovery')).toEqual({ tipo: 'erro' });
     expect(MENSAGEM_LINK_VENCIDO).toBe('Link de recuperação vencido ou já usado; peça outro');
+  });
+  it('erro de rede na recuperação não é "link vencido"', () => {
+    expect(classificarErroRecuperacao({ name: 'AuthRetryableFetchError', message: 'Failed to fetch', status: 0 })).toBe('rede');
+    expect(classificarErroRecuperacao(new TypeError('Failed to fetch'))).toBe('rede');
+    expect(classificarErroRecuperacao({ name: 'AuthApiError', message: 'x', status: 0 })).toBe('rede');
+    expect(classificarErroRecuperacao({ name: 'AuthApiError', message: 'Token has expired or is invalid', status: 403, code: 'otp_expired' })).toBe('vencido');
+    expect(classificarErroRecuperacao({ name: 'AuthApiError', message: 'x', status: 400 })).toBe('vencido');
+    expect(MENSAGEM_RECUPERACAO_SEM_REDE).toBe('Sem conexão; abra o link de novo quando a internet voltar');
   });
   it('limpa da URL os parâmetros de recuperação e mantém o resto', () => {
     expect(urlSemRecuperacao('https://rendller.netlify.app/?token_hash=abc&type=recovery')).toBe('/');
