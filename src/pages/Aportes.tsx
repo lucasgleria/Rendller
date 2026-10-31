@@ -311,9 +311,9 @@ function Editor({
         <fieldset>
           <legend>Aporte</legend>
           <div className="campos">
-            <CampoData rotulo="Data do aporte" valor={a.dataAporte} onChange={(x) => set('dataAporte', x)} invalido={!a.dataAporte} />
+            <CampoData rotulo="Data do aporte" valor={a.dataAporte} onChange={(x) => set('dataAporte', x)} invalido={!isISODate(a.dataAporte)} />
             <CampoNumero rotulo="Valor (R$)" valor={a.valor || null} onChange={(x) => set('valor', x ?? 0)} invalido={!(a.valor > 0)} />
-            <CampoData rotulo="Vencimento" valor={a.vencimento} onChange={(x) => set('vencimento', x)} invalido={!a.vencimento || (!!a.dataAporte && a.vencimento <= a.dataAporte)} />
+            <CampoData rotulo="Vencimento" valor={a.vencimento} onChange={(x) => set('vencimento', x)} invalido={!isISODate(a.vencimento) || (isISODate(a.dataAporte) && a.vencimento <= a.dataAporte)} />
           </div>
         </fieldset>
 
