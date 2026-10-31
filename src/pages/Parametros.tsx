@@ -26,13 +26,14 @@ interface Props {
 export default function Parametros({ dados, atualizar, substituir, hoje, estadoCdi, atualizarCdi, sincronizacao }: Props) {
   const p = dados.parametros;
   const setP = (parcial: Partial<P>) => atualizar((d) => ({ ...d, parametros: { ...d.parametros, ...parcial } }));
-  /** Edição do usuário: a fonte passa a dizer que o regime foi editado. */
+  /** Edição do usuário: marca o regime como editado (não recebe mais o padrão) e a fonte diz isso. */
   const setRegime = (c: Classe, parcial: Partial<RegimeTributario>) =>
     atualizar((d) => {
       const atual = d.parametros.regimes[c];
       const fonte = atual.fonte.startsWith('Editado pelo usuário') ? atual.fonte : `Editado pelo usuário (padrão: ${atual.fonte})`;
-      return { ...d, parametros: { ...d.parametros, regimes: { ...d.parametros.regimes, [c]: { ...atual, ...parcial, fonte } } } };
+      return { ...d, parametros: { ...d.parametros, regimes: { ...d.parametros.regimes, [c]: { ...atual, ...parcial, fonte, editado: true } } } };
     });
+  const mesesValidos = (x: number | null) => x != null && Number.isInteger(x) && x >= 0;
   const [msg, setMsg] = useState<{ tipo: 'azul' | 'vermelho'; texto: string } | null>(null);
   const [feriadosTexto, setFeriadosTexto] = useState(() => p.feriados.map(data).join('\n'));
   const cdiReal = ultimoCdi(p.cdiDiario);
@@ -222,14 +223,14 @@ export default function Parametros({ dados, atualizar, substituir, hoje, estadoC
                       <CampoCheck rotulo="" valor={r.fgc} onChange={(x) => setRegime(c, { fgc: x })} />
                     </td>
                     <td>
-                      <CampoNumero rotulo="" casas={0} valor={r.carenciaMinimaMeses} onChange={(x) => x != null && x >= 0 && setRegime(c, { carenciaMinimaMeses: x })} />
+                      <CampoNumero rotulo="" casas={0} valor={r.carenciaMinimaMeses} onChange={(x) => mesesValidos(x) && setRegime(c, { carenciaMinimaMeses: x as number })} />
                     </td>
                     <td>
                       <CampoNumero
                         rotulo=""
                         casas={0}
                         valor={r.carenciaMinimaMesesIndicePrecos}
-                        onChange={(x) => (x == null || x >= 0) && setRegime(c, { carenciaMinimaMesesIndicePrecos: x })}
+                        onChange={(x) => (x == null || mesesValidos(x)) && setRegime(c, { carenciaMinimaMesesIndicePrecos: x })}
                         dica="Vazio = a mesma"
                       />
                     </td>

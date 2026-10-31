@@ -14,8 +14,18 @@ const CHAVE = 'rendller:simulador:v1';
 function opcoesIniciais(hoje: string): Aporte[] {
   try {
     const s = localStorage.getItem(CHAVE);
-    // opções salvas antes das classes vêm com `tipo`: passam pela mesma migração dos aportes
-    if (s) return (JSON.parse(s) as unknown[]).map(migrarAporte);
+    // opções salvas antes das classes vêm com `tipo`: passam pela mesma migração dos aportes, uma a uma
+    const salvas: unknown = s ? JSON.parse(s) : null;
+    if (Array.isArray(salvas)) {
+      const validas = salvas.flatMap((x) => {
+        try {
+          return [migrarAporte(x)];
+        } catch {
+          return []; // descarta só a opção inválida
+        }
+      });
+      if (validas.length) return validas;
+    }
   } catch {
     /* sem armazenamento: começa do zero */
   }

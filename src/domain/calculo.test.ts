@@ -3,7 +3,7 @@ import { aliquotaIR, avaliar, fimCarencia, percentualIOF, regimeDe, resgatarParc
 import { agruparPorInstituicao, montarLinhas, resumir } from './carteira';
 import { APORTES_CARTEIRA_REAL, HOJE_CARTEIRA_REAL, LIQUIDO_HOJE_CARTEIRA_REAL, LIQUIDO_VENCIMENTO_CARTEIRA_REAL } from './carteiraReal.fixture';
 import { inicioConsulta, lerSerieBcb, mesclarCdi, ultimoCdi } from './cdi';
-import { Calendario, feriadosNacionais, somaDias, somaMeses } from './datas';
+import { Calendario, diasNoMes, feriadosNacionais, somaDias, somaMeses } from './datas';
 import { CALENDARIO_ANBIMA } from './feriadosAnbima';
 import { lerFeriadosAnbima } from './importacao';
 import { CLASSES, normalizarParametros, novoAporte, parametrosPadrao } from './padroes';
@@ -352,6 +352,21 @@ describe('somaMeses', () => {
     expect(somaMeses('2027-08-31', 6)).toBe('2028-02-29'); // 2028 é bissexto
     expect(somaMeses('2026-03-31', 1)).toBe('2026-04-30');
     expect(somaMeses('2026-10-05', 0)).toBe('2026-10-05');
+    expect(somaMeses('2026-12-31', 2)).toBe('2027-02-28');
+    expect(somaMeses('2026-03-31', -1)).toBe('2026-02-28');
+    expect(somaMeses('2100-01-31', 1)).toBe('2100-02-28'); // 2100 não é bissexto
+    expect(somaMeses('2000-01-31', 1)).toBe('2000-02-29'); // 2000 é
+  });
+  it('só aceita meses inteiros e data válida', () => {
+    expect(() => somaMeses('2026-10-05', 6.5)).toThrow();
+    expect(() => somaMeses('2026-10-05', Number.NaN)).toThrow();
+    expect(() => somaMeses('', 6)).toThrow();
+    expect(() => somaMeses('2026-13-01', 1)).toThrow();
+  });
+  it('dias no mês com ano bissexto', () => {
+    expect([2026, 2028, 2100, 2000].map((a) => diasNoMes(a, 2))).toEqual([28, 29, 28, 29]);
+    expect(diasNoMes(2026, 4)).toBe(30);
+    expect(diasNoMes(2026, 12)).toBe(31);
   });
 });
 
@@ -428,11 +443,17 @@ describe('classes e regime tributário', () => {
     const p2 = { ...pr, ipcaProjetado: 0.04 };
     const a = lote('LCI', { indexador: 'IPCA', spreadIpca: 0.06, carenciaAte: '' });
     expect(validarAporte(a, p2)).toContain('Informe a carência (LCI/LCA com índice de preços)');
-    expect(fimCarencia(a, p2)).toBe('');
+    expect(fimCarencia(a, p2)).toBe(somaMeses(a.dataAporte, 6)); // o mínimo de 6 meses vale em qualquer periodicidade
     const informada = { ...a, carenciaAte: somaMeses(a.dataAporte, 12) };
     expect(validarAporte(informada, p2)).toEqual([]);
     expect(fimCarencia(informada, p2)).toBe(informada.carenciaAte);
-    expect(validarAporte({ ...a, carenciaAte: somaMeses(a.dataAporte, 3) }, p2).join()).toContain('Carência menor que a mínima da classe');
+    const curta = { ...a, id: 'c', carenciaAte: somaMeses(a.dataAporte, 3) };
+    expect(validarAporte(curta, p2).join()).toContain('Carência menor que a mínima da classe');
+    expect(fimCarencia(curta, p2)).toBe(somaMeses(a.dataAporte, 6));
+    expect(resgatarParcial(curta, somaMeses(a.dataAporte, 4), 100, 'bruto', p2, cal, 'n')).toHaveProperty('erro');
+    // com a carência corrigida, o 4º mês é recusado pela carência e o 12º é permitido
+    expect(resgatarParcial(informada, somaMeses(a.dataAporte, 4), 100, 'bruto', p2, cal, 'n')).toEqual({ erro: 'O lote ainda está em carência.' });
+    expect(resgatarParcial(informada, somaMeses(a.dataAporte, 12), 100, 'bruto', p2, cal, 'n')).not.toHaveProperty('erro');
     // CDB com IPCA não tem carência mínima
     expect(validarAporte(lote('CDB', { indexador: 'IPCA', spreadIpca: 0.06 }), p2)).toEqual([]);
   });

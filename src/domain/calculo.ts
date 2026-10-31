@@ -1,5 +1,5 @@
 import { historicoCdi, taxaDiaria } from './cdi';
-import { Calendario, diasCorridos, maxData, minData, somaDias, somaMeses } from './datas';
+import { Calendario, diasCorridos, isISODate, maxData, minData, somaDias, somaMeses } from './datas';
 import type { Aporte, ISODate, Parametros, RegimeTributario } from './types';
 
 /**
@@ -52,19 +52,19 @@ function carenciaDependeDoIndice(a: Aporte, r: RegimeTributario): boolean {
   return a.indexador === 'IPCA' && r.carenciaMinimaMesesIndicePrecos != null;
 }
 
-/** Carência mínima da classe contada do aporte ('' = sem mínimo). */
+/** Carência mínima da classe contada do aporte ('' = sem mínimo ou sem data válida). */
 function carenciaMinima(a: Aporte, r: RegimeTributario): ISODate | '' {
-  return a.dataAporte && r.carenciaMinimaMeses > 0 ? somaMeses(a.dataAporte, r.carenciaMinimaMeses) : '';
+  const meses = Math.trunc(r.carenciaMinimaMeses);
+  return isISODate(a.dataAporte) && meses > 0 ? somaMeses(a.dataAporte, meses) : '';
 }
 
 /**
- * Fim da carência do lote: a maior entre a informada e a mínima da classe. Com IPCA numa classe cuja carência
- * depende do índice (LCI/LCA), vale só a informada: a mínima legal muda com a periodicidade da correção.
+ * Fim da carência do lote: a maior entre a informada e a mínima da classe. A mínima geral vale em qualquer
+ * periodicidade de correção; com IPCA em LCI/LCA a mínima maior depende da periodicidade, por isso
+ * `validarAporte` exige a carência informada.
  */
 export function fimCarencia(a: Aporte, p: Parametros): ISODate | '' {
-  const r = regimeDe(a, p);
-  if (carenciaDependeDoIndice(a, r)) return a.carenciaAte;
-  const minima = carenciaMinima(a, r);
+  const minima = carenciaMinima(a, regimeDe(a, p));
   if (!minima) return a.carenciaAte;
   return a.carenciaAte ? maxData(a.carenciaAte, minima) : minima;
 }

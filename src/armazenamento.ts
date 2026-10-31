@@ -16,8 +16,8 @@ export interface Carga {
   dados: Dados;
   podeGravar: boolean;
   origem: OrigemCarga;
-  /** Objeto v1 como estava salvo (só com origem `v1`), para ajustar a impressão da sincronização. */
-  brutoV1?: unknown;
+  /** Objeto como estava salvo (origem `v1` ou `v2`), para ajustar a impressão da sincronização após normalizar. */
+  bruto?: unknown;
   /** Por que não dá para gravar: conteúdo ilegível (cópia guardada) ou armazenamento bloqueado. */
   motivo?: 'ilegivel' | 'bloqueado';
   /** Com a v2 ilegível: existe uma v1 salva, intacta (nunca usada automaticamente). */
@@ -56,7 +56,7 @@ export function carregarDe(s: Pick<Storage, 'getItem' | 'setItem'>): Carga {
   try {
     const obj: unknown = JSON.parse(bruto);
     const dados = migrarDados(obj);
-    return daV1 ? { dados, podeGravar: true, origem: 'v1', brutoV1: obj } : { dados, podeGravar: true, origem: 'v2' };
+    return { dados, podeGravar: true, origem: daV1 ? 'v1' : 'v2', bruto: obj };
   } catch {
     guardarIlegivel(s, bruto);
     let temV1 = false;

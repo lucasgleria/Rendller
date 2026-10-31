@@ -15,7 +15,7 @@ export function paraNuvem(d: Dados): Dados {
     delete parametros.cdiData;
     delete parametros.cdiFonte;
   }
-  // `versao` vem do próprio objeto: aplicado ao bruto v1, reproduz a impressão que o app antigo assinou.
+  // `versao` vem do próprio objeto: aplicado ao bruto salvo (v1 ou v2), reproduz a impressão que o app antigo assinou.
   return { versao: d.versao, aportes: d.aportes, parametros: parametros as Parametros };
 }
 
@@ -58,11 +58,12 @@ export function impressao(d: Dados): string {
 }
 
 /**
- * Depois da migração v1 → v2 a impressão muda só pelo formato. Se a config assinou exatamente os dados v1
- * (sem edição pendente), passa a assinar os mesmos dados já migrados; senão fica como está (a edição segue pendente).
+ * Ao abrir, a migração de formato (v1 → v2) e a normalização (ex.: regimes padrão novos) mudam a impressão sem
+ * edição nenhuma. Se a config assinou exatamente os dados salvos (`bruto`, sem edição pendente), passa a assinar
+ * os mesmos dados já normalizados; senão fica como está (a edição segue pendente).
  */
-export function ajustarImpressaoAposMigracao<C extends { impressao: string }>(config: C, brutoV1: unknown, migrados: Dados): C {
-  return config.impressao === impressao(brutoV1 as Dados) ? { ...config, impressao: impressao(migrados) } : config;
+export function ajustarImpressaoAposNormalizacao<C extends { impressao: string }>(config: C, bruto: unknown, normalizados: Dados): C {
+  return config.impressao === impressao(bruto as Dados) ? { ...config, impressao: impressao(normalizados) } : config;
 }
 
 export interface SituacaoCiclo {
