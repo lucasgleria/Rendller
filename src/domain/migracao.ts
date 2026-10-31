@@ -9,7 +9,8 @@ export function classeDoTipoV1(tipo: unknown): Classe {
   return tipo === 'CDB Pós-fixado' || tipo === 'CDB Prefixado' || tipo === 'CDB IPCA+' ? 'CDB' : 'Outro';
 }
 
-function migrarAporte(bruto: unknown): Aporte {
+/** Um aporte salvo em qualquer versão conhecida (v1 com `tipo` ou v2), no formato atual. */
+export function migrarAporte(bruto: unknown): Aporte {
   if (!bruto || typeof bruto !== 'object' || Array.isArray(bruto)) throw new Error('Dados inválidos: aporte em formato desconhecido.');
   const { tipo, ...resto } = bruto as Record<string, unknown>;
   // Classe já gravada (inclusive uma que este app ainda não conhece) é mantida; senão vem do antigo `tipo`.

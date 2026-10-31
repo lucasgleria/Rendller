@@ -3,11 +3,11 @@ import { avaliar } from './calculo';
 import { APORTES_CARTEIRA_REAL, HOJE_CARTEIRA_REAL, LIQUIDO_HOJE_CARTEIRA_REAL, LIQUIDO_VENCIMENTO_CARTEIRA_REAL } from './carteiraReal.fixture';
 import { Calendario } from './datas';
 import { classeDoTipoV1, migrarDados } from './migracao';
-import { novoAporte, parametrosPadrao } from './padroes';
+import { normalizarParametros, novoAporte, parametrosPadrao } from './padroes';
 
 /** Parâmetros como eram gravados na versão 1 (sem `regimes`). */
 function parametrosV1(extra: Record<string, unknown> = {}) {
-  const { regimes: _, ...v1 } = { ...parametrosPadrao(), cdiAnual: 0.139 };
+  const { regimes: _, regimesVersao: __, ...v1 } = { ...parametrosPadrao(), cdiAnual: 0.139 };
   return { ...v1, ...extra };
 }
 
@@ -94,5 +94,63 @@ describe('migração de formato (v1 → v2)', () => {
     expect(() => migrarDados({ versao: 1, aportes: [], parametros: null })).toThrow(Error);
     expect(() => migrarDados({ versao: 1, aportes: [null], parametros: {} })).toThrow(Error);
     expect(() => migrarDados({ versao: 3, aportes: [], parametros: {} })).toThrow(/versão mais nova do app/);
+  });
+});
+
+describe('regimes salvos (normalizarParametros)', () => {
+  // Regimes como a Fase 1 gravava (sem `regimesVersao`, carência em dias).
+  const regimesFase1 = () => ({
+    CDB: {
+      ir: 'regressivo',
+      iof: true,
+      fgc: true,
+      carenciaMinimaDias: 0,
+      fonte: 'Receita Federal (IR renda fixa 2026), Portal do Investidor/CVM (IOF), FGC (garantia ordinária); revisado em outubro/2026',
+    },
+    Outro: {
+      ir: 'regressivo',
+      iof: true,
+      fgc: true,
+      carenciaMinimaDias: 0,
+      fonte: 'Sem regra própria: segue o CDB, como o app tratava todo lote até outubro/2026',
+    },
+  });
+  const padrao = () => parametrosPadrao();
+
+  it('regimes padrão antigos sem edição são atualizados', () => {
+    const p = normalizarParametros({ ...parametrosV1(), regimes: regimesFase1() } as never);
+    expect(p.regimes).toEqual(padrao().regimes);
+    expect(p.regimesVersao).toBe(padrao().regimesVersao);
+  });
+
+  it('regimes editados pelo usuário são mantidos', () => {
+    const editados = regimesFase1();
+    editados.CDB.fgc = false;
+    const p = normalizarParametros({ ...parametrosV1(), regimes: editados } as never);
+    expect(p.regimes.CDB).toMatchObject({ ir: 'regressivo', iof: true, fgc: false, carenciaMinimaMeses: 0, fonte: editados.CDB.fonte });
+    expect(p.regimes.CDB).not.toHaveProperty('carenciaMinimaDias');
+    expect(p.regimes.Outro).toEqual(padrao().regimes.Outro); // não editado: recebe o padrão novo
+    expect(p.regimes.LCA).toEqual(padrao().regimes.LCA); // classe nova entra com o padrão
+    // edição feita já na versão atual também é mantida
+    const atual = padrao();
+    const lca = { ...atual.regimes.LCA, carenciaMinimaMeses: 9 };
+    const q = normalizarParametros({ ...atual, regimes: { ...atual.regimes, LCA: lca } });
+    expect(q.regimes.LCA).toEqual(lca);
+  });
+
+  it('dados da Fase 1 (CDB/Outro com carenciaMinimaDias) são lidos', () => {
+    const fase1 = {
+      versao: 2,
+      aportes: [{ ...aporteV1({ id: 'f1', vencimento: '2028-10-05' }), tipo: undefined, classe: 'CDB' }, { ...aporteV1({ id: 'f2' }), tipo: undefined, classe: 'Outro' }],
+      parametros: { ...parametrosV1(), regimes: regimesFase1() },
+    };
+    const d = migrarDados(JSON.parse(JSON.stringify(fase1)));
+    expect(d.aportes.map((a) => a.classe)).toEqual(['CDB', 'Outro']);
+    for (const r of Object.values(d.parametros.regimes)) {
+      expect(typeof r.carenciaMinimaMeses).toBe('number');
+      expect(r).not.toHaveProperty('carenciaMinimaDias');
+    }
+    const cal = new Calendario(d.parametros.feriados);
+    expect(Number.isFinite(avaliar(d.aportes[0], '2027-10-05', d.parametros, cal).liquido)).toBe(true);
   });
 });

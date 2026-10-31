@@ -2,7 +2,7 @@
 export type ISODate = string;
 
 /** Classe de ativo: a espécie do título, que define o regime tributário. Não diz como o título rende (isso é o `Indexador`). */
-export type Classe = 'CDB' | 'Outro';
+export type Classe = 'CDB' | 'RDB' | 'LC' | 'LCI' | 'LCA' | 'Outro';
 export type Indexador = 'CDI' | 'PRE' | 'IPCA';
 export type Liquidez = 'Diária' | 'No vencimento' | 'Após carência' | 'Outra';
 /** Status informado pelo usuário. `Ativo` vira `Vencido` automaticamente após o vencimento. */
@@ -73,7 +73,10 @@ export interface RegimeTributario {
   ir: 'regressivo' | 'isento';
   iof: boolean;
   fgc: boolean;
-  carenciaMinimaDias: number; // dias corridos; 0 = sem mínimo
+  /** Carência mínima legal em meses contados da data do aporte; 0 = sem mínimo. */
+  carenciaMinimaMeses: number;
+  /** Carência mínima quando o título é corrigido por índice de preços; null = a mesma de `carenciaMinimaMeses`. */
+  carenciaMinimaMesesIndicePrecos: number | null;
   fonte: string; // de onde veio a regra, com data
 }
 
@@ -103,6 +106,8 @@ export interface Parametros {
   tabelaIOF: number[];
   /** Regime tributário de cada classe de ativo. */
   regimes: Record<Classe, RegimeTributario>;
+  /** Versão dos regimes padrão de onde vieram os regimes salvos (para receber correções sem perder edições). */
+  regimesVersao: string;
   fgcLimitePorInstituicao: number;
   fgcLimiteGlobal4Anos: number;
   /** fração do limite do FGC a partir da qual o alerta de concentração dispara */

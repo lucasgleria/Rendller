@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { aliquotaIR, avaliar, percentualIOF, resgatarParcial, type ResgateParcial } from './calculo';
+import { aliquotaIR, avaliar, fimCarencia, percentualIOF, regimeDe, resgatarParcial, validarAporte, type ResgateParcial } from './calculo';
 import { agruparPorInstituicao, montarLinhas, resumir } from './carteira';
 import { APORTES_CARTEIRA_REAL, HOJE_CARTEIRA_REAL, LIQUIDO_HOJE_CARTEIRA_REAL, LIQUIDO_VENCIMENTO_CARTEIRA_REAL } from './carteiraReal.fixture';
 import { inicioConsulta, lerSerieBcb, mesclarCdi, ultimoCdi } from './cdi';
-import { Calendario, feriadosNacionais, somaDias } from './datas';
+import { Calendario, feriadosNacionais, somaDias, somaMeses } from './datas';
 import { CALENDARIO_ANBIMA } from './feriadosAnbima';
 import { lerFeriadosAnbima } from './importacao';
-import { normalizarParametros, novoAporte, parametrosPadrao } from './padroes';
-import type { Aporte, CdiDia, Parametros } from './types';
+import { CLASSES, normalizarParametros, novoAporte, parametrosPadrao } from './padroes';
+import type { Aporte, CdiDia, Classe, Parametros, RegimeTributario } from './types';
 
 // Valores de referência calculados de forma independente (script Python da auditoria de 04/10/2026),
 // com CDI 13,90% a.a., 252 dias úteis e feriados nacionais.
@@ -340,5 +340,151 @@ describe('calendário ANBIMA', () => {
     const editada = normalizarParametros({ ...antiga, feriados: ['2026-01-01'] });
     expect(editada.feriados).toEqual(['2026-01-01']);
     expect(editada.feriadosVersao).toBe('');
+  });
+});
+
+describe('somaMeses', () => {
+  it('mantém o dia do mês e usa o último dia quando ele não existe', () => {
+    expect(somaMeses('2026-01-15', 1)).toBe('2026-02-15');
+    expect(somaMeses('2026-10-05', 12)).toBe('2027-10-05');
+    expect(somaMeses('2026-11-30', 3)).toBe('2027-02-28');
+    expect(somaMeses('2026-08-31', 6)).toBe('2027-02-28');
+    expect(somaMeses('2027-08-31', 6)).toBe('2028-02-29'); // 2028 é bissexto
+    expect(somaMeses('2026-03-31', 1)).toBe('2026-04-30');
+    expect(somaMeses('2026-10-05', 0)).toBe('2026-10-05');
+  });
+});
+
+describe('classes e regime tributário', () => {
+  // Regimes explícitos do teste: não dependem dos valores regulatórios padrão.
+  const reg = (r: Partial<RegimeTributario>): RegimeTributario => ({
+    ir: 'regressivo',
+    iof: true,
+    fgc: true,
+    carenciaMinimaMeses: 0,
+    carenciaMinimaMesesIndicePrecos: null,
+    fonte: 'teste',
+    ...r,
+  });
+  const pr: Parametros = {
+    ...p,
+    regimes: {
+      CDB: reg({}),
+      RDB: reg({}),
+      LC: reg({}),
+      LCI: reg({ ir: 'isento', carenciaMinimaMeses: 6, carenciaMinimaMesesIndicePrecos: 36 }),
+      LCA: reg({ ir: 'isento', iof: false, carenciaMinimaMeses: 6, carenciaMinimaMesesIndicePrecos: 12 }),
+      Outro: reg({ fgc: false }),
+    },
+  };
+  const lote = (classe: Classe, parcial: Partial<Aporte> = {}) => cdb({ classe, vencimento: venc(730), ...parcial });
+
+  it('classe isenta: IR zero e IOF conforme o regime', () => {
+    const lca = avaliar(lote('LCA', { pctCdi: 0.95 }), venc(400), pr, cal);
+    expect(lca.rendimentoBruto).toBeGreaterThan(0);
+    expect(lca.ir).toBe(0);
+    expect(lca.iof).toBe(0);
+    expect(lca.liquido).toBeCloseTo(lca.bruto, 10);
+    // antes do 30º dia: LCA (iof: false) não paga IOF; LCI (iof: true) paga, mas segue isenta de IR
+    expect(avaliar(lote('LCA'), venc(10), pr, cal).iof).toBe(0);
+    const lci = avaliar(lote('LCI'), venc(10), pr, cal);
+    expect(lci.iof).toBeCloseTo(lci.rendimentoBruto * percentualIOF(10, pr), 10);
+    expect(lci.ir).toBe(0);
+  });
+
+  it('compara CDB e LCA pelo líquido, não pelo % do CDI', () => {
+    // Segundo caminho (script Python independente, sem o motor): R$ 1.000 de 05/10/2026 a 05/10/2027,
+    // 365 dias corridos e 250 dias úteis (feriados nacionais), CDI 13,90% → td = 1,139^(1/252) − 1.
+    // CDB 110%: bruto = 1000 × (1 + td × 1,10)^250 = 1152,6064; IR 17,5% × 152,6064 = 26,7061; líquido 1125,9003.
+    // LCA 95%: bruto = líquido = 1000 × (1 + td × 0,95)^250 = 1130,5039 (isenta de IR, IOF zero).
+    const cdbR = avaliar(lote('CDB', { pctCdi: 1.1, vencimento: venc(365) }), venc(365), pr, cal);
+    const lcaR = avaliar(lote('LCA', { pctCdi: 0.95, vencimento: venc(365) }), venc(365), pr, cal);
+    expect(cdbR.diasUteis).toBe(250);
+    expect(cdbR.ir).toBeCloseTo(cdbR.rendimentoBruto * 0.175, 10);
+    expect(cdbR.liquido).toBeCloseTo(1125.9003, 3);
+    expect(lcaR.liquido).toBeCloseTo(1130.5039, 3);
+    expect(lcaR.liquido).toBeGreaterThan(cdbR.liquido); // 95% isento rende mais que 110% tributado
+  });
+
+  it('carência mínima da classe bloqueia resgate parcial', () => {
+    const a = lote('LCI', { id: 'l', carenciaAte: '' });
+    const fim = somaMeses(a.dataAporte, 6);
+    expect(fimCarencia(a, pr)).toBe(fim);
+    expect(resgatarParcial(a, somaDias(fim, -1), 100, 'bruto', pr, cal, 'n')).toEqual({ erro: 'O lote ainda está em carência.' });
+    expect(resgatarParcial(a, fim, 100, 'bruto', pr, cal, 'n')).not.toHaveProperty('erro');
+    // carência do lote maior que a mínima prevalece
+    expect(fimCarencia({ ...a, carenciaAte: somaMeses(a.dataAporte, 9) }, pr)).toBe(somaMeses(a.dataAporte, 9));
+  });
+
+  it('validarAporte acusa carência menor que a mínima', () => {
+    const a = lote('LCA');
+    const minima = somaMeses(a.dataAporte, 6);
+    expect(validarAporte({ ...a, carenciaAte: somaDias(minima, -1) }, pr).join()).toContain('Carência menor que a mínima da classe');
+    expect(validarAporte({ ...a, carenciaAte: minima }, pr)).toEqual([]);
+    expect(validarAporte({ ...a, carenciaAte: '' }, pr)).toEqual([]); // sem carência informada vale a mínima
+  });
+
+  it('LCI/LCA com IPCA: não deduz a carência e exige que seja informada', () => {
+    const p2 = { ...pr, ipcaProjetado: 0.04 };
+    const a = lote('LCI', { indexador: 'IPCA', spreadIpca: 0.06, carenciaAte: '' });
+    expect(validarAporte(a, p2)).toContain('Informe a carência (LCI/LCA com índice de preços)');
+    expect(fimCarencia(a, p2)).toBe('');
+    const informada = { ...a, carenciaAte: somaMeses(a.dataAporte, 12) };
+    expect(validarAporte(informada, p2)).toEqual([]);
+    expect(fimCarencia(informada, p2)).toBe(informada.carenciaAte);
+    expect(validarAporte({ ...a, carenciaAte: somaMeses(a.dataAporte, 3) }, p2).join()).toContain('Carência menor que a mínima da classe');
+    // CDB com IPCA não tem carência mínima
+    expect(validarAporte(lote('CDB', { indexador: 'IPCA', spreadIpca: 0.06 }), p2)).toEqual([]);
+  });
+
+  it('FGC soma só classes com FGC', () => {
+    const aportes = [
+      lote('CDB', { emissor: 'Banco A', valor: 1000 }),
+      lote('Outro', { emissor: 'Banco A', valor: 3000 }), // regime do teste sem FGC
+    ];
+    const linhas = montarLinhas(aportes, '2026-12-01', pr);
+    const [g] = agruparPorInstituicao(linhas, pr);
+    expect(g.exposicaoFgc).toBeCloseTo(linhas[0].hoje.bruto, 10);
+    expect(g.exposicaoSemFgc).toBeCloseTo(linhas[1].hoje.bruto, 10);
+    expect(g.brutoHoje).toBeCloseTo(linhas[0].hoje.bruto + linhas[1].hoje.bruto, 10);
+  });
+
+  it('classe sem regime cai em Outro e não quebra', () => {
+    const a = lote('Tesouro' as Classe);
+    expect(regimeDe(a, pr)).toBe(pr.regimes.Outro);
+    expect(regimeDe(lote('constructor' as Classe), pr)).toBe(pr.regimes.Outro);
+    expect(validarAporte(a, pr)).toContain('Classe desconhecida: Tesouro');
+    const [l] = montarLinhas([a], '2026-12-01', pr);
+    expect(Number.isFinite(l.hoje.liquido)).toBe(true);
+  });
+
+  it('IOF de LCI na prática: resgatada depois da carência, IOF zero', () => {
+    const padrao = { ...parametrosPadrao(), cdiAnual: 0.139 };
+    const a = lote('LCI');
+    expect(regimeDe(a, padrao).iof).toBe(true); // a regra legal é IOF regressivo...
+    const r = avaliar(a, fimCarencia(a, padrao) as string, padrao, cal);
+    expect(r.diasCorridos).toBeGreaterThanOrEqual(30); // ...mas a carência de 6 meses passa do 30º dia
+    expect(r.pctIof).toBe(0);
+    expect(r.iof).toBe(0);
+    expect(r.ir).toBe(0);
+  });
+
+  it('sanidade em todas as classes', () => {
+    for (const { valor: c } of CLASSES) {
+      for (const dias of [10, 400, 800]) {
+        const r = avaliar(lote(c, { carenciaAte: '' }), venc(dias), pr, cal);
+        expect(r.rendimentoBruto).toBeGreaterThanOrEqual(0);
+        expect(r.liquido).toBeLessThanOrEqual(r.bruto);
+        expect(r.ir).toBeGreaterThanOrEqual(0);
+      }
+    }
+  });
+
+  it('regimes padrão vêm com fonte', () => {
+    const r = parametrosPadrao().regimes;
+    for (const { valor: c } of CLASSES) {
+      expect(r[c]).toBeDefined();
+      expect(r[c].fonte.trim()).not.toBe('');
+    }
   });
 });

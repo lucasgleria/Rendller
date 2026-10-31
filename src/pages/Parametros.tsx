@@ -2,14 +2,14 @@ import { useEffect, useState } from 'react';
 import { baixarArquivo } from '../armazenamento';
 import type { EstadoCdi } from '../cdiOnline';
 import CartaoSincronizacao from '../components/CartaoSincronizacao';
-import { CampoCheck, CampoData, CampoNumero, CampoTexto } from '../components/campos';
+import { CampoCheck, CampoData, CampoNumero, CampoSelect, CampoTexto } from '../components/campos';
 import { ultimoCdi } from '../domain/cdi';
 import { isISODate } from '../domain/datas';
 import { CALENDARIO_ANBIMA } from '../domain/feriadosAnbima';
 import { importarAportes, importarCdi, paraISO, validarBackup } from '../domain/importacao';
-import { dadosVazios, normalizarParametros } from '../domain/padroes';
-import type { Dados, ISODate, Parametros as P } from '../domain/types';
-import { data, moeda, pct } from '../formato';
+import { CLASSES, dadosVazios, normalizarParametros, regimesPadrao } from '../domain/padroes';
+import type { Classe, Dados, ISODate, Parametros as P, RegimeTributario } from '../domain/types';
+import { data, moeda, pct, rotuloClasse } from '../formato';
 import { baixarCalendarioAnbima, lerArquivoAnbima, versaoAnbimaPublicada } from '../servicos';
 import type { Sincronizacao } from '../sincronizacao';
 
@@ -26,6 +26,13 @@ interface Props {
 export default function Parametros({ dados, atualizar, substituir, hoje, estadoCdi, atualizarCdi, sincronizacao }: Props) {
   const p = dados.parametros;
   const setP = (parcial: Partial<P>) => atualizar((d) => ({ ...d, parametros: { ...d.parametros, ...parcial } }));
+  /** Edição do usuário: a fonte passa a dizer que o regime foi editado. */
+  const setRegime = (c: Classe, parcial: Partial<RegimeTributario>) =>
+    atualizar((d) => {
+      const atual = d.parametros.regimes[c];
+      const fonte = atual.fonte.startsWith('Editado pelo usuário') ? atual.fonte : `Editado pelo usuário (padrão: ${atual.fonte})`;
+      return { ...d, parametros: { ...d.parametros, regimes: { ...d.parametros.regimes, [c]: { ...atual, ...parcial, fonte } } } };
+    });
   const [msg, setMsg] = useState<{ tipo: 'azul' | 'vermelho'; texto: string } | null>(null);
   const [feriadosTexto, setFeriadosTexto] = useState(() => p.feriados.map(data).join('\n'));
   const cdiReal = ultimoCdi(p.cdiDiario);
@@ -168,6 +175,74 @@ export default function Parametros({ dados, atualizar, substituir, hoje, estadoC
           <p className="mut" style={{ fontSize: 13 }}>
             Cobertura ordinária: {moeda(p.fgcLimitePorInstituicao)} por CPF por conglomerado, principal + rendimentos. Fonte: {p.premissasFonte}.
           </p>
+        </div>
+      </div>
+
+      <div className="card" style={{ marginBottom: 12 }}>
+        <h2>Regime tributário por classe</h2>
+        <p className="sub">Carência mínima em meses contados do aporte. Com IPCA, a carência de LCI/LCA depende da periodicidade da correção e precisa ser informada no aporte.</p>
+        <div className="tabela-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Classe</th>
+                <th>IR</th>
+                <th>IOF</th>
+                <th>FGC</th>
+                <th>Carência mínima (meses)</th>
+                <th>Com índice de preços (meses)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {CLASSES.map(({ valor: c }) => {
+                const r = p.regimes[c];
+                return (
+                  <tr key={c}>
+                    <td>
+                      <b>{rotuloClasse(c)}</b>
+                      <div className="linha2" title={r.fonte}>
+                        {r.fonte.length > 90 ? `${r.fonte.slice(0, 90)}…` : r.fonte}
+                      </div>
+                    </td>
+                    <td>
+                      <CampoSelect
+                        rotulo=""
+                        valor={r.ir}
+                        opcoes={[
+                          { valor: 'regressivo', rotulo: 'Regressivo' },
+                          { valor: 'isento', rotulo: 'Isento' },
+                        ]}
+                        onChange={(x) => setRegime(c, { ir: x })}
+                      />
+                    </td>
+                    <td>
+                      <CampoCheck rotulo="" valor={r.iof} onChange={(x) => setRegime(c, { iof: x })} />
+                    </td>
+                    <td>
+                      <CampoCheck rotulo="" valor={r.fgc} onChange={(x) => setRegime(c, { fgc: x })} />
+                    </td>
+                    <td>
+                      <CampoNumero rotulo="" casas={0} valor={r.carenciaMinimaMeses} onChange={(x) => x != null && x >= 0 && setRegime(c, { carenciaMinimaMeses: x })} />
+                    </td>
+                    <td>
+                      <CampoNumero
+                        rotulo=""
+                        casas={0}
+                        valor={r.carenciaMinimaMesesIndicePrecos}
+                        onChange={(x) => (x == null || x >= 0) && setRegime(c, { carenciaMinimaMesesIndicePrecos: x })}
+                        dica="Vazio = a mesma"
+                      />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div className="acoes">
+          <button className="btn pequeno" onClick={() => confirm('Voltar todos os regimes ao padrão conferido em fonte oficial?') && setP({ regimes: regimesPadrao() })}>
+            Restaurar padrão
+          </button>
         </div>
       </div>
 

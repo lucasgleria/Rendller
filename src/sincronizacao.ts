@@ -135,7 +135,9 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, c
   const enviar = useCallback(
     async (c: ConfigSync, base: number): Promise<boolean> => {
       const d = dadosRef.current;
-      const r = await gravarCofre(c.cred, base, await cifrar(c.cred, paraNuvem(d)));
+      if (d.versao !== 2) throw new Error('Dados locais num formato inesperado; nada foi enviado.');
+      // a nuvem sempre recebe versao 2 (a impressão de dados legados continua usando a versão do objeto)
+      const r = await gravarCofre(c.cred, base, await cifrar(c.cred, { ...paraNuvem(d), versao: 2 }));
       if (r.tipo === 'conflito') return false;
       if (r.tipo !== 'ok') throw new Error('O servidor recusou a gravação.');
       aguardandoCofre.current = false; // envio só por decisão do usuário quando os dados eram ilegíveis

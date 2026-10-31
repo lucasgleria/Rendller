@@ -1,6 +1,6 @@
 import { historicoCdi, taxaDiaria } from './cdi';
-import { Calendario, diasCorridos, minData, somaDias } from './datas';
-import type { Aporte, ISODate, Parametros } from './types';
+import { Calendario, diasCorridos, maxData, minData, somaDias, somaMeses } from './datas';
+import type { Aporte, ISODate, Parametros, RegimeTributario } from './types';
 
 /**
  * Resultado de um lote avaliado numa data.
@@ -41,6 +41,33 @@ export function percentualIOF(diasCorridos: number, p: Parametros): number {
 }
 
 export const taxaDiariaCDI = taxaDiaria;
+
+/** Regime tributário da classe do aporte; classe sem regime (desconhecida) usa o de `Outro`. */
+export function regimeDe(a: Aporte, p: Parametros): RegimeTributario {
+  return Object.prototype.hasOwnProperty.call(p.regimes, a.classe) ? p.regimes[a.classe] : p.regimes.Outro;
+}
+
+/** true quando a carência mínima da classe depende de como o índice de preços corrige o título (o app não sabe). */
+function carenciaDependeDoIndice(a: Aporte, r: RegimeTributario): boolean {
+  return a.indexador === 'IPCA' && r.carenciaMinimaMesesIndicePrecos != null;
+}
+
+/** Carência mínima da classe contada do aporte ('' = sem mínimo). */
+function carenciaMinima(a: Aporte, r: RegimeTributario): ISODate | '' {
+  return a.dataAporte && r.carenciaMinimaMeses > 0 ? somaMeses(a.dataAporte, r.carenciaMinimaMeses) : '';
+}
+
+/**
+ * Fim da carência do lote: a maior entre a informada e a mínima da classe. Com IPCA numa classe cuja carência
+ * depende do índice (LCI/LCA), vale só a informada: a mínima legal muda com a periodicidade da correção.
+ */
+export function fimCarencia(a: Aporte, p: Parametros): ISODate | '' {
+  const r = regimeDe(a, p);
+  if (carenciaDependeDoIndice(a, r)) return a.carenciaAte;
+  const minima = carenciaMinima(a, r);
+  if (!minima) return a.carenciaAte;
+  return a.carenciaAte ? maxData(a.carenciaAte, minima) : minima;
+}
 
 /** Fim da fase promocional (exclusivo): início + dias de promoção. */
 export function fimPromocao(a: Aporte): ISODate | null {
@@ -89,9 +116,10 @@ export function avaliar(a: Aporte, data: ISODate, p: Parametros, cal: Calendario
   const dc = diasCorridos(a.dataAporte, fim);
   const bruto = a.valor * fator;
   const rendimentoBruto = Math.max(0, bruto - a.valor);
-  const pctIof = percentualIOF(dc, p);
+  const regime = regimeDe(a, p);
+  const pctIof = regime.iof ? percentualIOF(dc, p) : 0;
   const iof = rendimentoBruto * pctIof;
-  const aliquotaIr = aliquotaIR(dc, p);
+  const aliquotaIr = regime.ir === 'isento' ? 0 : aliquotaIR(dc, p);
   const ir = Math.max(0, rendimentoBruto - iof) * aliquotaIr;
   const liquido = bruto - iof - ir;
   const rendimentoLiquido = liquido - a.valor;
@@ -134,6 +162,11 @@ export function validarAporte(a: Aporte, p: Parametros): string[] {
     if (p.ipcaProjetado == null) e.push('IPCA projetado em Parâmetros');
   }
   if (a.status === 'Resgatado' && !a.resgate) e.push('Dados do resgate');
+  if (!Object.prototype.hasOwnProperty.call(p.regimes, a.classe)) e.push(`Classe desconhecida: ${a.classe}`);
+  const r = regimeDe(a, p);
+  if (carenciaDependeDoIndice(a, r) && !a.carenciaAte) e.push('Informe a carência (LCI/LCA com índice de preços)');
+  const minima = carenciaMinima(a, r);
+  if (minima && a.carenciaAte && a.carenciaAte < minima) e.push(`Carência menor que a mínima da classe (${r.carenciaMinimaMeses} meses)`);
   return e;
 }
 
@@ -169,7 +202,8 @@ export function resgatarParcial(
   if (!data || data < a.dataAporte) return { erro: 'A data do resgate é anterior ao aporte.' };
   if (data >= a.vencimento) return { erro: 'No vencimento ou depois dele, registre o resgate total.' };
   if (!a.permiteResgateAntecipado) return { erro: 'Este lote não permite resgate antecipado.' };
-  if (a.carenciaAte && data < a.carenciaAte) return { erro: 'O lote ainda está em carência.' };
+  const carencia = fimCarencia(a, p);
+  if (carencia && data < carencia) return { erro: 'O lote ainda está em carência.' };
   const atual = avaliar(a, data, p, cal);
   if (!atual.calculavel) return { erro: 'Não há como estimar o valor do lote nesta data.' };
   const total = base === 'bruto' ? atual.bruto : atual.liquido;
