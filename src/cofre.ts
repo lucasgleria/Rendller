@@ -3,7 +3,11 @@
  * frase-senha → PBKDF2-SHA256 (600 mil iterações) → HKDF → três valores independentes:
  *   id (nome do cofre no servidor) · token (autoriza ler/gravar) · chave AES-GCM 256 (cifra os dados).
  * O servidor recebe só id, token e o conteúdo cifrado; sem a frase, não consegue ler nada.
+ * Para a sincronização, o cofre antigo é uma implementação de `Remoto & Cifra` (`remotoCofreAntigo`).
  */
+import type { Cifra, Envelope, Remoto, RespostaRemota } from './remoto';
+
+export type { Envelope } from './remoto';
 
 const SAL = 'rendller:cofre:v1';
 const ITERACOES = 600_000;
@@ -13,11 +17,6 @@ export interface Credenciais {
   id: string;
   token: string;
   chave: string; // base64 da chave AES (guardada neste aparelho para não pedir a frase de novo)
-}
-
-export interface Envelope {
-  iv: string;
-  cifrado: string;
 }
 
 const enc = new TextEncoder();
@@ -49,11 +48,14 @@ export async function derivarCredenciais(frase: string): Promise<Credenciais> {
   return { id: hex(id), token: hex(token), chave: paraBase64(chave) };
 }
 
-async function chaveAes(c: Credenciais, uso: KeyUsage): Promise<CryptoKey> {
+/** Só o que a cifra usa: o id (dado autenticado) e a chave. */
+type ChaveCofre = Pick<Credenciais, 'id' | 'chave'>;
+
+async function chaveAes(c: ChaveCofre, uso: KeyUsage): Promise<CryptoKey> {
   return crypto.subtle.importKey('raw', deBase64(c.chave), 'AES-GCM', false, [uso]);
 }
 
-export async function cifrar(c: Credenciais, dados: unknown): Promise<Envelope> {
+export async function cifrar(c: ChaveCofre, dados: unknown): Promise<Envelope> {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const corpo = enc.encode(JSON.stringify(dados));
   // o id entra como dado autenticado: um conteúdo copiado de outro cofre não decifra aqui
@@ -61,7 +63,7 @@ export async function cifrar(c: Credenciais, dados: unknown): Promise<Envelope> 
   return { iv: paraBase64(iv), cifrado: paraBase64(cifrado) };
 }
 
-export async function decifrar(c: Credenciais, e: Envelope): Promise<unknown> {
+export async function decifrar(c: ChaveCofre, e: Envelope): Promise<unknown> {
   try {
     const claro = await crypto.subtle.decrypt(
       { name: 'AES-GCM', iv: deBase64(e.iv), additionalData: enc.encode(c.id) },
@@ -76,11 +78,8 @@ export async function decifrar(c: Credenciais, e: Envelope): Promise<unknown> {
 
 // ---------- HTTP ----------
 
-export type Resposta =
-  | { tipo: 'ok'; versao: number; envelope?: Envelope; atualizadoEm?: string }
-  | { tipo: 'conflito'; versao: number }
-  | { tipo: 'inexistente' }
-  | { tipo: 'negado' };
+/** Mantido como alias: o tipo agora mora em `remoto.ts`. */
+export type Resposta = RespostaRemota;
 
 const URL_COFRE = '/api/cofre';
 
@@ -109,3 +108,16 @@ async function chamar(c: Credenciais, metodo: 'GET' | 'PUT' | 'DELETE', corpo?: 
 export const lerCofre = (c: Credenciais) => chamar(c, 'GET');
 export const gravarCofre = (c: Credenciais, base: number, e: Envelope) => chamar(c, 'PUT', { base, ...e });
 export const apagarCofre = (c: Credenciais) => chamar(c, 'DELETE');
+
+/** O cofre antigo (`/api/cofre`, identificado só pela frase-senha) como `Remoto & Cifra`. Protocolo HTTP inalterado. */
+export function remotoCofreAntigo(c: Credenciais): Remoto & Cifra {
+  return {
+    ler: () => lerCofre(c),
+    gravar: (base, e) => gravarCofre(c, base, e),
+    apagar: async () => {
+      await apagarCofre(c);
+    },
+    cifrar: (dados) => cifrar(c, dados),
+    decifrar: (e) => decifrar(c, e),
+  };
+}

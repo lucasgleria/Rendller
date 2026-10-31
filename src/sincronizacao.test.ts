@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { tratarCofre, type Armazem, type Registro } from '../netlify/cofre';
-import { cifrar, decifrar, derivarCredenciais, gravarCofre, lerCofre, apagarCofre } from './cofre';
+import { cifrar, decifrar, derivarCredenciais, gravarCofre, lerCofre, apagarCofre, remotoCofreAntigo, type Credenciais } from './cofre';
 import { aplicarConsultaCdi } from './domain/cdi';
 import { novoAporte, parametrosPadrao } from './domain/padroes';
 import { migrarDados } from './domain/migracao';
-import { ajustarImpressaoAposNormalizacao, daNuvem, decidirCiclo, impressao, jsonEstavel, paraNuvem } from './domain/sincronia';
+import { aguardandoDepois, ajustarImpressaoAposNormalizacao, daNuvem, decidirCiclo, impressao, jsonEstavel, paraNuvem, planejarCiclo } from './domain/sincronia';
+import { contratoRemoto } from './remoto.contrato';
+import { lerConfigSalva } from './sincronizacao';
 import type { Dados } from './domain/types';
 
 const FRASE = 'cavalo bateria grampo correto';
@@ -300,5 +302,129 @@ describe('dois aparelhos (cliente + servidor)', () => {
     expect(await lerCofre(await derivarCredenciais('frase errada qualquer'))).toEqual({ tipo: 'inexistente' });
     expect(await apagarCofre(celular)).toMatchObject({ tipo: 'ok' });
     expect(await lerCofre(notebook)).toEqual({ tipo: 'inexistente' });
+  });
+});
+
+/** Credenciais aleatórias, sem PBKDF2 (rápido): cada uma é um cofre novo com chave própria. */
+function credenciaisAleatorias(): Credenciais {
+  const hexa = () => [...crypto.getRandomValues(new Uint8Array(32))].map((x) => x.toString(16).padStart(2, '0')).join('');
+  return { id: hexa(), token: hexa(), chave: btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32)))) };
+}
+
+describe('cofre antigo como Remoto', () => {
+  let arm: ReturnType<typeof memoria>;
+  beforeEach(() => {
+    arm = memoria();
+    vi.stubGlobal('fetch', (url: string, init: RequestInit) => tratarCofre(new Request(`https://rendller.test${url}`, init), arm));
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  contratoRemoto('cofre antigo', async () => remotoCofreAntigo(credenciaisAleatorias()));
+
+  it('fluxo "dois aparelhos" pelo Remoto dá o mesmo resultado das chamadas diretas', async () => {
+    const celular = await derivarCredenciais(FRASE);
+    const notebook = await derivarCredenciais(FRASE);
+    const errada = await derivarCredenciais('frase errada qualquer');
+    type Api = {
+      gravar(c: Credenciais, base: number, d: unknown): Promise<unknown>;
+      ler(c: Credenciais): Promise<unknown>;
+      apagar(c: Credenciais): Promise<void>;
+    };
+    // resultado comparável: sem o IV aleatório nem o horário; o envelope entra decifrado
+    const resumo = async (c: Credenciais, r: unknown) => {
+      const x = r as { tipo: string; versao?: number; envelope?: { iv: string; cifrado: string } };
+      return { tipo: x.tipo, versao: x.versao, conteudo: x.envelope ? daNuvem(await decifrar(c, x.envelope), dados(0)).aportes.length : null };
+    };
+    const fluxo = async (api: Api) => {
+      arm = memoria();
+      const passos: unknown[] = [];
+      passos.push(await resumo(celular, await api.gravar(celular, 0, paraNuvem(dados(3)))));
+      passos.push(JSON.stringify([...arm.mapa.values()]).includes('PagBank'));
+      passos.push(await resumo(notebook, await api.ler(notebook)));
+      passos.push(await resumo(celular, await api.gravar(celular, 1, paraNuvem(dados(4)))));
+      passos.push(await resumo(notebook, await api.gravar(notebook, 1, paraNuvem(dados(1)))));
+      passos.push(await resumo(errada, await api.ler(errada)));
+      await api.apagar(celular);
+      passos.push(await resumo(notebook, await api.ler(notebook)));
+      return passos;
+    };
+    const direto = await fluxo({
+      gravar: async (c, base, d) => gravarCofre(c, base, await cifrar(c, d)),
+      ler: (c) => lerCofre(c),
+      apagar: async (c) => void (await apagarCofre(c)),
+    });
+    const peloRemoto = await fluxo({
+      gravar: async (c, base, d) => {
+        const r = remotoCofreAntigo(c);
+        return r.gravar(base, await r.cifrar(d));
+      },
+      ler: (c) => remotoCofreAntigo(c).ler(),
+      apagar: (c) => remotoCofreAntigo(c).apagar(),
+    });
+    expect(peloRemoto).toEqual(direto);
+    expect(direto).toEqual([
+      { tipo: 'ok', versao: 1, conteudo: null },
+      false,
+      { tipo: 'ok', versao: 1, conteudo: 3 },
+      { tipo: 'ok', versao: 2, conteudo: null },
+      { tipo: 'conflito', versao: 2, conteudo: null },
+      { tipo: 'inexistente', versao: undefined, conteudo: null },
+      { tipo: 'inexistente', versao: undefined, conteudo: null },
+    ]);
+  });
+});
+
+describe('config da sincronização', () => {
+  const cred = { id: 'a'.repeat(64), token: 'b'.repeat(64), chave: 'Y2hhdmU=' };
+  it('config antiga, sem origem, é lida como cofre antigo com os mesmos campos', () => {
+    const antiga = { cred, versao: 7, impressao: 'abc:10', ultimaSync: '2026-10-30T12:00:00.000Z' };
+    expect(lerConfigSalva(JSON.stringify(antiga))).toEqual({ ...antiga, origem: 'cofre-antigo' });
+    expect(lerConfigSalva(JSON.stringify({ ...antiga, origem: 'cofre-antigo' }))).toEqual({ ...antiga, origem: 'cofre-antigo' });
+  });
+  it('config ausente, quebrada ou de origem desconhecida não liga a sincronização', () => {
+    expect(lerConfigSalva(null)).toBeNull();
+    expect(lerConfigSalva('{quebrado')).toBeNull();
+    expect(lerConfigSalva(JSON.stringify({ versao: 1 }))).toBeNull();
+    expect(lerConfigSalva(JSON.stringify({ cred, versao: 1, impressao: '', ultimaSync: '', origem: 'outra' }))).toBeNull();
+  });
+});
+
+describe('planejamento do ciclo (o que o hook decide)', () => {
+  const base = {
+    versaoLocal: 3,
+    versaoRemota: 3,
+    temEnvelope: true,
+    impressaoConfig: 'x',
+    impressaoLocal: 'x',
+    impressaoRemota: null as string | null,
+    aguardandoCofre: false,
+    podeGravar: true,
+  };
+  it('só pede o conteúdo remoto quando a versão mudou ou os dados locais eram ilegíveis', () => {
+    expect(planejarCiclo(base).precisaRemoto).toBe(false);
+    expect(planejarCiclo({ ...base, versaoRemota: 4 }).precisaRemoto).toBe(true);
+    expect(planejarCiclo({ ...base, aguardandoCofre: true }).precisaRemoto).toBe(true);
+  });
+  it('monta a entrada de decidirCiclo a partir das impressões', () => {
+    expect(planejarCiclo(base).decisao).toBe('nada');
+    expect(planejarCiclo({ ...base, impressaoLocal: 'y' }).decisao).toBe('enviar');
+    expect(planejarCiclo({ ...base, versaoRemota: 4, impressaoRemota: 'z' }).decisao).toBe('aplicar');
+    expect(planejarCiclo({ ...base, versaoRemota: 4, impressaoLocal: 'y', impressaoRemota: 'z' }).decisao).toBe('conflito');
+    expect(planejarCiclo({ ...base, versaoRemota: 4, impressaoLocal: 'y', impressaoRemota: 'y' }).decisao).toBe('aplicar'); // remoto igual ao local
+  });
+  it('precisa do remoto e não há envelope: não faz nada (nunca envia)', () => {
+    expect(planejarCiclo({ ...base, versaoRemota: 4, temEnvelope: false, impressaoLocal: 'y' }).decisao).toBe('nada');
+    expect(planejarCiclo({ ...base, aguardandoCofre: true, temEnvelope: false, impressaoLocal: 'y' }).decisao).toBe('nada');
+  });
+  it('dados ilegíveis: aplica o cofre, ou conflito se o usuário já editou', () => {
+    expect(planejarCiclo({ ...base, aguardandoCofre: true, podeGravar: false, impressaoLocal: 'y', impressaoRemota: 'z' }).decisao).toBe('aplicar');
+    expect(planejarCiclo({ ...base, aguardandoCofre: true, podeGravar: true, impressaoLocal: 'y', impressaoRemota: 'z' }).decisao).toBe('conflito');
+  });
+  it('aguardandoCofre desliga só depois de aplicar ou enviar', () => {
+    expect(aguardandoDepois(true, 'aplicou')).toBe(false);
+    expect(aguardandoDepois(true, 'enviou')).toBe(false);
+    expect(aguardandoDepois(true, 'conflito')).toBe(true);
+    expect(aguardandoDepois(true, 'nada')).toBe(true);
+    expect(aguardandoDepois(false, 'nada')).toBe(false);
   });
 });
