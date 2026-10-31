@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apagarCofre, cifrar, decifrar, derivarCredenciais, gravarCofre, lerCofre, type Credenciais } from './cofre';
 import type { Carga } from './armazenamento';
-import { ajustarImpressaoAposMigracao, daNuvem, decidirCiclo, impressao, paraNuvem } from './domain/sincronia';
+import { ajustarImpressaoAposNormalizacao, daNuvem, decidirCiclo, impressao, paraNuvem } from './domain/sincronia';
 import type { Dados } from './domain/types';
 
 const CHAVE_CONFIG = 'rendller:sync:v1';
@@ -38,11 +38,11 @@ function lerConfig(): ConfigSync | null {
   }
 }
 
-/** Config salva; depois da migração v1 → v2 a impressão passa a assinar os dados migrados (sem falso "pendente"). */
-function configInicial(dados: Dados, carga: Pick<Carga, 'origem' | 'brutoV1'>): ConfigSync | null {
+/** Config salva; depois da migração e da normalização a impressão passa a assinar os dados normalizados (sem falso "pendente"). */
+function configInicial(dados: Dados, carga: Pick<Carga, 'origem' | 'bruto'>): ConfigSync | null {
   const c = lerConfig();
-  if (!c || carga.origem !== 'v1') return c;
-  const ajustada = ajustarImpressaoAposMigracao(c, carga.brutoV1, dados);
+  if (!c || (carga.origem !== 'v1' && carga.origem !== 'v2')) return c;
+  const ajustada = ajustarImpressaoAposNormalizacao(c, carga.bruto, dados);
   if (ajustada !== c) gravarConfig(ajustada);
   return ajustada;
 }
@@ -75,7 +75,7 @@ function semRede(e: unknown): boolean {
  * Se os dados locais estavam ilegíveis ao abrir, o cofre é baixado e aplicado mesmo na mesma versão; nada local
  * vai por cima dele (uma edição feita antes do download vira conflito). `podeGravar` vem de `useDados`.
  */
-export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, carga: Pick<Carga, 'origem' | 'brutoV1'>, podeGravar: boolean) {
+export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, carga: Pick<Carga, 'origem' | 'bruto'>, podeGravar: boolean) {
   const [config, setConfigEstado] = useState<ConfigSync | null>(() => configInicial(dados, carga));
   const [status, setStatus] = useState<StatusSync>(() => (lerConfig() ? 'sincronizando' : 'desligado'));
   const [erro, setErro] = useState<string | null>(null);

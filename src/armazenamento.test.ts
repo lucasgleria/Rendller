@@ -37,8 +37,10 @@ describe('armazenamento local (carregarDe)', () => {
     const v1 = brutoV1(2);
     const r = carregarDe(memoria({ [CHAVE_V1]: v1 }));
     expect(r.origem).toBe('v1');
-    expect(r.brutoV1).toEqual(JSON.parse(v1));
-    expect(carregarDe(memoria({ [CHAVE]: JSON.stringify(dadosVazios()) })).origem).toBe('v2');
+    expect(r.bruto).toEqual(JSON.parse(v1));
+    const v2 = carregarDe(memoria({ [CHAVE]: JSON.stringify(dadosVazios()) }));
+    expect(v2.origem).toBe('v2');
+    expect(v2.bruto).toEqual(JSON.parse(JSON.stringify(dadosVazios())));
     expect(carregarDe(memoria()).origem).toBe('vazio');
   });
 

@@ -78,6 +78,8 @@ export interface RegimeTributario {
   /** Carência mínima quando o título é corrigido por índice de preços; null = a mesma de `carenciaMinimaMeses`. */
   carenciaMinimaMesesIndicePrecos: number | null;
   fonte: string; // de onde veio a regra, com data
+  /** true = editado pelo usuário em Parâmetros; sem ele, o regime sempre recebe o padrão da versão atual. */
+  editado?: boolean;
 }
 
 export interface FaixaIR {

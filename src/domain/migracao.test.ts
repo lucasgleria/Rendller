@@ -123,19 +123,46 @@ describe('regimes salvos (normalizarParametros)', () => {
     expect(p.regimesVersao).toBe(padrao().regimesVersao);
   });
 
-  it('regimes editados pelo usuário são mantidos', () => {
-    const editados = regimesFase1();
-    editados.CDB.fgc = false;
-    const p = normalizarParametros({ ...parametrosV1(), regimes: editados } as never);
-    expect(p.regimes.CDB).toMatchObject({ ir: 'regressivo', iof: true, fgc: false, carenciaMinimaMeses: 0, fonte: editados.CDB.fonte });
-    expect(p.regimes.CDB).not.toHaveProperty('carenciaMinimaDias');
-    expect(p.regimes.Outro).toEqual(padrao().regimes.Outro); // não editado: recebe o padrão novo
+  it('sem marcador → padrão atual', () => {
+    // mesmo diferente do padrão, um regime sem `editado` (ex.: da Fase 1) recebe o padrão da versão atual
+    const fase1 = regimesFase1();
+    fase1.CDB.fgc = false;
+    const p = normalizarParametros({ ...parametrosV1(), regimes: fase1 } as never);
+    expect(p.regimes.CDB).toEqual(padrao().regimes.CDB);
     expect(p.regimes.LCA).toEqual(padrao().regimes.LCA); // classe nova entra com o padrão
-    // edição feita já na versão atual também é mantida
+  });
+
+  it('editado → mantém', () => {
     const atual = padrao();
-    const lca = { ...atual.regimes.LCA, carenciaMinimaMeses: 9 };
+    const lca = { ...atual.regimes.LCA, carenciaMinimaMeses: 9, editado: true };
     const q = normalizarParametros({ ...atual, regimes: { ...atual.regimes, LCA: lca } });
     expect(q.regimes.LCA).toEqual(lca);
+    expect(q.regimes.LCI).toEqual(atual.regimes.LCI);
+  });
+
+  it("fonte 'Editado pelo usuário' sem o campo → mantém", () => {
+    const atual = padrao();
+    const cdb = { ...atual.regimes.CDB, fgc: false, fonte: `Editado pelo usuário (padrão: ${atual.regimes.CDB.fonte})` };
+    const q = normalizarParametros({ ...atual, regimes: { ...atual.regimes, CDB: cdb } });
+    expect(q.regimes.CDB).toEqual({ ...cdb, editado: true });
+  });
+
+  it('regimes da nuvem ou de backup são validados por tipo', () => {
+    const atual = padrao();
+    const lixo = JSON.parse(
+      '{"LCI":{"ir":"xyz","iof":"false","fgc":1,"carenciaMinimaMeses":"6","carenciaMinimaMesesIndicePrecos":-1,"fonte":7,"editado":true},' +
+        '"__proto__":{"ir":"isento","poluido":true},"constructor":{"ir":"isento"},"prototype":{"ir":"isento"}}',
+    );
+    const q = normalizarParametros({ ...atual, regimes: lixo });
+    const { editado, ...lci } = q.regimes.LCI;
+    expect(editado).toBe(true);
+    expect(lci).toEqual(atual.regimes.LCI); // todo campo inválido usa o padrão
+    expect(Object.getPrototypeOf(q.regimes)).toBe(Object.prototype);
+    expect(({} as Record<string, unknown>).poluido).toBeUndefined();
+    for (const k of ['__proto__', 'constructor', 'prototype']) expect(Object.prototype.hasOwnProperty.call(q.regimes, k)).toBe(false);
+    // meses fracionários não entram
+    const r = normalizarParametros({ ...atual, regimes: { ...atual.regimes, LCA: { ...atual.regimes.LCA, carenciaMinimaMeses: 6.5, editado: true } } });
+    expect(r.regimes.LCA.carenciaMinimaMeses).toBe(6);
   });
 
   it('dados da Fase 1 (CDB/Outro com carenciaMinimaDias) são lidos', () => {

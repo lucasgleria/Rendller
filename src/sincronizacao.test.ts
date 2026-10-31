@@ -4,7 +4,7 @@ import { cifrar, decifrar, derivarCredenciais, gravarCofre, lerCofre, apagarCofr
 import { aplicarConsultaCdi } from './domain/cdi';
 import { novoAporte, parametrosPadrao } from './domain/padroes';
 import { migrarDados } from './domain/migracao';
-import { ajustarImpressaoAposMigracao, daNuvem, decidirCiclo, impressao, jsonEstavel, paraNuvem } from './domain/sincronia';
+import { ajustarImpressaoAposNormalizacao, daNuvem, decidirCiclo, impressao, jsonEstavel, paraNuvem } from './domain/sincronia';
 import type { Dados } from './domain/types';
 
 const FRASE = 'cavalo bateria grampo correto';
@@ -136,7 +136,7 @@ describe('sincronização depois da migração para v2', () => {
     const config = { versao: 5, impressao: impressao(bruto as unknown as Dados), outro: 'x' };
     const migrados = migrarDados(bruto);
     expect(pend(migrados, config)).toBe(true); // sem o ajuste, o formato novo pareceria uma edição
-    const c = ajustarImpressaoAposMigracao(config, bruto, migrados);
+    const c = ajustarImpressaoAposNormalizacao(config, bruto, migrados);
     expect(c).toEqual({ ...config, impressao: impressao(migrados) });
     expect(decidirCiclo({ versaoLocal: 5, versaoRemota: 5, pendente: pend(migrados, c), ilegivel: false, editadoDesdeIlegivel: false })).toBe('nada');
   });
@@ -144,7 +144,7 @@ describe('sincronização depois da migração para v2', () => {
   it('aparelho atrasado sem edição baixa o remoto sem conflito', () => {
     const bruto = brutoV1(2);
     const migrados = migrarDados(bruto);
-    const c = ajustarImpressaoAposMigracao({ versao: 5, impressao: impressao(bruto as unknown as Dados) }, bruto, migrados);
+    const c = ajustarImpressaoAposNormalizacao({ versao: 5, impressao: impressao(bruto as unknown as Dados) }, bruto, migrados);
     expect(decidirCiclo({ versaoLocal: 5, versaoRemota: 7, pendente: pend(migrados, c), ilegivel: false, editadoDesdeIlegivel: false })).toBe('aplicar');
   });
 
@@ -153,14 +153,54 @@ describe('sincronização depois da migração para v2', () => {
     const migrados = migrarDados(bruto);
     // edição feita no app antigo e ainda não enviada: a config assinou outro conteúdo
     const antiga = { versao: 5, impressao: impressao(brutoV1(1) as unknown as Dados) };
-    const c = ajustarImpressaoAposMigracao(antiga, bruto, migrados);
+    const c = ajustarImpressaoAposNormalizacao(antiga, bruto, migrados);
     expect(c).toBe(antiga);
     expect(pend(migrados, c)).toBe(true);
     expect(decidirCiclo({ versaoLocal: 5, versaoRemota: 5, pendente: true, ilegivel: false, editadoDesdeIlegivel: false })).toBe('enviar');
     // edição depois da migração
-    const c2 = ajustarImpressaoAposMigracao({ versao: 5, impressao: impressao(bruto as unknown as Dados) }, bruto, migrados);
+    const c2 = ajustarImpressaoAposNormalizacao({ versao: 5, impressao: impressao(bruto as unknown as Dados) }, bruto, migrados);
     const editado = { ...migrados, aportes: [...migrados.aportes, novoAporte({ id: 'novo' })] };
     expect(pend(editado, c2)).toBe(true);
+  });
+});
+
+describe('sincronização depois da normalização dos regimes', () => {
+  const pend = (d: Dados, c: { impressao: string }) => impressao(d) !== c.impressao;
+  // v2 como a Fase 1 gravava: regimes CDB/Outro com a carência em dias, sem `regimesVersao`.
+  function brutoFase1(): Record<string, unknown> {
+    const { regimes: _, regimesVersao: _v, ...parametros } = parametrosPadrao();
+    const r = { ir: 'regressivo', iof: true, fgc: true, carenciaMinimaDias: 0 };
+    const regimes = { CDB: { ...r, fonte: 'Receita Federal (IR renda fixa 2026), Portal do Investidor/CVM (IOF), FGC (garantia ordinária); revisado em outubro/2026' }, Outro: { ...r, fonte: 'Sem regra própria' } };
+    return JSON.parse(JSON.stringify({ versao: 2, aportes: dados(2).aportes, parametros: { ...parametros, regimes } }));
+  }
+
+  it('dados da Fase 1 sem edição não ficam pendentes depois de normalizados', () => {
+    const bruto = brutoFase1();
+    const config = { versao: 4, impressao: impressao(bruto as unknown as Dados) };
+    const normalizados = migrarDados(bruto);
+    expect(pend(normalizados, config)).toBe(true); // só a normalização mudou
+    const c = ajustarImpressaoAposNormalizacao(config, bruto, normalizados);
+    expect(decidirCiclo({ versaoLocal: 4, versaoRemota: 4, pendente: pend(normalizados, c), ilegivel: false, editadoDesdeIlegivel: false })).toBe('nada');
+  });
+
+  it('aumento de REGIMES_VERSAO com regimes antigos sem edição: o aparelho atrasado aplica o remoto', () => {
+    // regimes de uma versão anterior (outra fonte, outra versão), sem marcador de edição
+    const atual = parametrosPadrao();
+    const antigos = Object.fromEntries(Object.entries(atual.regimes).map(([c, r]) => [c, { ...r, fonte: 'padrão antigo' }]));
+    const bruto = JSON.parse(JSON.stringify({ versao: 2, aportes: dados(1).aportes, parametros: { ...atual, regimes: antigos, regimesVersao: '2020-01-01' } }));
+    const normalizados = migrarDados(bruto);
+    expect(normalizados.parametros.regimes).toEqual(atual.regimes);
+    const c = ajustarImpressaoAposNormalizacao({ versao: 4, impressao: impressao(bruto) }, bruto, normalizados);
+    expect(decidirCiclo({ versaoLocal: 4, versaoRemota: 6, pendente: pend(normalizados, c), ilegivel: false, editadoDesdeIlegivel: false })).toBe('aplicar');
+  });
+
+  it('edição real continua pendente depois da normalização', () => {
+    const bruto = brutoFase1();
+    const normalizados = migrarDados(bruto);
+    const outra = { versao: 4, impressao: impressao({ ...(bruto as unknown as Dados), aportes: [] }) }; // assinou outro conteúdo
+    const c = ajustarImpressaoAposNormalizacao(outra, bruto, normalizados);
+    expect(c).toBe(outra);
+    expect(decidirCiclo({ versaoLocal: 4, versaoRemota: 6, pendente: pend(normalizados, c), ilegivel: false, editadoDesdeIlegivel: false })).toBe('conflito');
   });
 });
 

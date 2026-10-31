@@ -16,14 +16,29 @@ export function somaDias(iso: ISODate, dias: number): ISODate {
   return deDiaNum(diaNum(iso) + dias);
 }
 
-/** Soma meses mantendo o dia do mês; se o dia não existe no mês de destino, usa o último dia (31/08 + 6 = 28/02). */
+export function ehBissexto(ano: number): boolean {
+  return (ano % 4 === 0 && ano % 100 !== 0) || ano % 400 === 0;
+}
+
+/** Dias no mês (`mes` de 1 a 12). */
+export function diasNoMes(ano: number, mes: number): number {
+  if (mes === 2) return ehBissexto(ano) ? 29 : 28;
+  return mes === 4 || mes === 6 || mes === 9 || mes === 11 ? 30 : 31;
+}
+
+/**
+ * Soma um número inteiro de meses mantendo o dia do mês; se o dia não existe no mês de destino, usa o último
+ * dia (31/08 + 6 = 28/02). Lança erro para meses não inteiros ou data inválida: nunca devolve uma data inválida.
+ */
 export function somaMeses(iso: ISODate, meses: number): ISODate {
-  const [a, m, d] = iso.split('-').map(Number);
-  const total = a * 12 + (m - 1) + meses;
+  if (!Number.isInteger(meses)) throw new Error(`Número de meses inválido: ${meses}`);
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  const [a, mm, d] = m ? [Number(m[1]), Number(m[2]), Number(m[3])] : [0, 0, 0];
+  if (!m || mm < 1 || mm > 12 || d < 1 || d > diasNoMes(a, mm)) throw new Error(`Data inválida: ${iso}`);
+  const total = a * 12 + (mm - 1) + meses;
   const ano = Math.floor(total / 12);
-  const mes = total - ano * 12; // 0 = janeiro
-  const ultimo = new Date(Date.UTC(ano, mes + 1, 0)).getUTCDate();
-  return `${String(ano).padStart(4, '0')}-${String(mes + 1).padStart(2, '0')}-${String(Math.min(d, ultimo)).padStart(2, '0')}`;
+  const mes = total - ano * 12 + 1;
+  return `${String(ano).padStart(4, '0')}-${String(mes).padStart(2, '0')}-${String(Math.min(d, diasNoMes(ano, mes))).padStart(2, '0')}`;
 }
 
 /** Dias corridos de `a` até `b` (b − a). */

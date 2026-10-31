@@ -2,7 +2,7 @@ import { feriadosNacionais } from './datas';
 import { CALENDARIO_ANBIMA } from './feriadosAnbima';
 import type { Aporte, Classe, Dados, Parametros, RegimeTributario } from './types';
 
-/** Versão dos regimes padrão abaixo. Mude ao corrigir um regime: regimes salvos sem edição recebem a correção. */
+/** Versão dos regimes padrão abaixo (informativa: regimes sem `editado` sempre recebem o padrão atual). */
 export const REGIMES_VERSAO = '2026-10-31';
 
 const CDB_RDB_LC = 'IR regressivo: Lei 11.033/2004, art. 1º, e Lei 9.779/1999, art. 5º. IOF regressivo: Decreto 6.306/2007, art. 32, §1º, I. Sem carência mínima legal.';
@@ -64,29 +64,6 @@ export function regimesPadrao(): Record<Classe, RegimeTributario> {
 }
 
 /**
- * Regimes padrão de versões anteriores, como foram gravados, para reconhecer regimes salvos sem edição.
- * '' = Fase 1 (sem `regimesVersao`, carência em dias).
- */
-const REGIMES_ANTERIORES: Record<string, Record<string, unknown>> = {
-  '': {
-    CDB: {
-      ir: 'regressivo',
-      iof: true,
-      fgc: true,
-      carenciaMinimaDias: 0,
-      fonte: 'Receita Federal (IR renda fixa 2026), Portal do Investidor/CVM (IOF), FGC (garantia ordinária); revisado em outubro/2026',
-    },
-    Outro: {
-      ir: 'regressivo',
-      iof: true,
-      fgc: true,
-      carenciaMinimaDias: 0,
-      fonte: 'Sem regra própria: segue o CDB, como o app tratava todo lote até outubro/2026',
-    },
-  },
-};
-
-/**
  * Premissas iniciais (CLAUDE.md seções 4 e 5, revisadas em outubro/2026).
  * CDI inicial = valor que estava na planilha (13,90%), sem data/fonte. Com `cdiAutomatico`, o app o troca
  * pelo último CDI do Banco Central na primeira consulta bem-sucedida.
@@ -137,7 +114,7 @@ export function parametrosPadrao(): Parametros {
 export function normalizarParametros(salvo: Partial<Parametros> | undefined): Parametros {
   const p: Parametros = { ...parametrosPadrao(), ...salvo };
   if (!Array.isArray(p.cdiDiario)) p.cdiDiario = [];
-  p.regimes = normalizarRegimes(salvo?.regimes, salvo?.regimesVersao);
+  p.regimes = normalizarRegimes(salvo?.regimes);
   p.regimesVersao = REGIMES_VERSAO;
   if (salvo && salvo.feriadosFonte === undefined) {
     const antiga = feriadosNacionais(2020, 2040);
@@ -154,50 +131,53 @@ export function normalizarParametros(salvo: Partial<Parametros> | undefined): Pa
   return p;
 }
 
-/** JSON com chaves ordenadas, para comparar regimes sem depender da ordem dos campos. */
-function textoEstavel(v: unknown): string {
-  if (Array.isArray(v)) return `[${v.map(textoEstavel).join(',')}]`;
-  if (v && typeof v === 'object') {
-    const o = v as Record<string, unknown>;
-    return `{${Object.keys(o)
-      .filter((k) => o[k] !== undefined)
-      .sort()
-      .map((k) => `${JSON.stringify(k)}:${textoEstavel(o[k])}`)
-      .join(',')}}`;
-  }
-  return JSON.stringify(v) ?? 'null';
-}
+const CHAVES_PROIBIDAS = new Set(['__proto__', 'constructor', 'prototype']);
 
-/** Campos de versões anteriores no formato atual: a Fase 1 guardava a carência em dias. */
-function camposAtuais(r: Record<string, unknown>): Partial<RegimeTributario> {
-  const { carenciaMinimaDias, ...resto } = r;
-  if (typeof carenciaMinimaDias === 'number' && resto.carenciaMinimaMeses === undefined) {
-    // Arredonda para cima (meses de 28 dias): a conversão nunca encurta uma carência. A Fase 1 só gravava 0.
-    resto.carenciaMinimaMeses = carenciaMinimaDias > 0 ? Math.ceil(carenciaMinimaDias / 28) : 0;
-  }
-  return resto as Partial<RegimeTributario>;
+const ehMeses = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+
+/** Regime editado: marcador explícito ou fonte reescrita pela tela (versão 650dbf3, antes do marcador). */
+function foiEditado(r: Record<string, unknown>): boolean {
+  return r.editado === true || (typeof r.fonte === 'string' && r.fonte.startsWith('Editado pelo usuário'));
 }
 
 /**
- * Regimes salvos completados com os padrões. Um regime salvo igual ao padrão da versão em que foi gravado
- * (o usuário não editou) recebe o padrão atual; um regime editado é mantido. Classes desconhecidas
- * (de uma versão mais nova do app) são mantidas.
+ * Regime vindo da nuvem ou de backup validado campo a campo: um campo de tipo errado usa o do padrão.
+ * Meses fracionários são truncados. A carência em dias da Fase 1 vira meses (arredonda para cima, meses de 28 dias,
+ * para nunca encurtar a carência; a Fase 1 só gravava 0).
  */
-function normalizarRegimes(salvo: unknown, versaoSalva: unknown): Record<Classe, RegimeTributario> {
+function regimeValidado(r: Record<string, unknown>, base: RegimeTributario): RegimeTributario {
+  const meses = ehMeses(r.carenciaMinimaMeses)
+    ? Math.trunc(r.carenciaMinimaMeses)
+    : r.carenciaMinimaMeses === undefined && ehMeses(r.carenciaMinimaDias)
+      ? Math.ceil(r.carenciaMinimaDias / 28)
+      : base.carenciaMinimaMeses;
+  const indice = r.carenciaMinimaMesesIndicePrecos;
+  return {
+    ir: r.ir === 'regressivo' || r.ir === 'isento' ? r.ir : base.ir,
+    iof: typeof r.iof === 'boolean' ? r.iof : base.iof,
+    fgc: typeof r.fgc === 'boolean' ? r.fgc : base.fgc,
+    carenciaMinimaMeses: meses,
+    carenciaMinimaMesesIndicePrecos: indice === null ? null : ehMeses(indice) ? Math.trunc(indice) : base.carenciaMinimaMesesIndicePrecos,
+    fonte: typeof r.fonte === 'string' ? r.fonte : base.fonte,
+    editado: true,
+  };
+}
+
+/**
+ * Regimes salvos completados com os padrões. Só um regime editado pelo usuário é mantido (validado por tipo);
+ * os demais recebem o padrão da versão atual, inclusive correções futuras. Classes desconhecidas
+ * (de uma versão mais nova do app) são mantidas se forem objetos.
+ */
+function normalizarRegimes(salvo: unknown): Record<Classe, RegimeTributario> {
   const padrao = regimesPadrao();
-  if (!salvo || typeof salvo !== 'object') return padrao;
-  const r = salvo as Record<string, unknown>;
-  const anteriores = versaoSalva === REGIMES_VERSAO ? null : REGIMES_ANTERIORES[typeof versaoSalva === 'string' ? versaoSalva : ''];
-  const out: Record<string, RegimeTributario> = {};
-  for (const [c, v] of Object.entries(r)) {
-    if (v && typeof v === 'object') {
-      out[c] = { carenciaMinimaMeses: 0, carenciaMinimaMesesIndicePrecos: null, ...camposAtuais(v as Record<string, unknown>) } as RegimeTributario;
-    }
-  }
-  for (const c of Object.keys(padrao) as Classe[]) {
-    const v = r[c];
-    const semEdicao = !!anteriores && anteriores[c] !== undefined && textoEstavel(v) === textoEstavel(anteriores[c]);
-    out[c] = !v || typeof v !== 'object' || semEdicao ? padrao[c] : { ...padrao[c], ...camposAtuais(v as Record<string, unknown>) };
+  if (!salvo || typeof salvo !== 'object' || Array.isArray(salvo)) return padrao;
+  const out: Record<string, RegimeTributario> = { ...padrao };
+  for (const [c, v] of Object.entries(salvo as Record<string, unknown>)) {
+    if (CHAVES_PROIBIDAS.has(c) || !v || typeof v !== 'object' || Array.isArray(v)) continue;
+    const r = v as Record<string, unknown>;
+    const conhecida = Object.prototype.hasOwnProperty.call(padrao, c);
+    if (conhecida && !foiEditado(r)) continue; // sem edição: padrão atual
+    out[c] = regimeValidado(r, conhecida ? padrao[c as Classe] : padrao.Outro);
   }
   return out as Record<Classe, RegimeTributario>;
 }
