@@ -12,7 +12,10 @@ export function paraISO(v: Celula): string {
     const s = v.trim();
     if (isISODate(s)) return s;
     const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+    if (m) {
+      const iso = `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+      return isISODate(iso) ? iso : ''; // data inexistente (ex.: 30/02) fica como faltando
+    }
   }
   return '';
 }

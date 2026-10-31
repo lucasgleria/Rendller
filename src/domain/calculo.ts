@@ -59,11 +59,13 @@ function carenciaMinima(a: Aporte, r: RegimeTributario): ISODate | '' {
 }
 
 /**
- * Fim da carência do lote: a maior entre a informada e a mínima da classe. A mínima geral vale em qualquer
+ * Fim da carência do lote: a maior entre a informada e a mínima da classe. Nunca lança erro: com data do aporte
+ * ou carência inexistente devolve '' (o problema aparece em `validarAporte`). A mínima geral vale em qualquer
  * periodicidade de correção; com IPCA em LCI/LCA a mínima maior depende da periodicidade, por isso
  * `validarAporte` exige a carência informada.
  */
 export function fimCarencia(a: Aporte, p: Parametros): ISODate | '' {
+  if (!isISODate(a.dataAporte) || (a.carenciaAte && !isISODate(a.carenciaAte))) return '';
   const minima = carenciaMinima(a, regimeDe(a, p));
   if (!minima) return a.carenciaAte;
   return a.carenciaAte ? maxData(a.carenciaAte, minima) : minima;
@@ -71,7 +73,7 @@ export function fimCarencia(a: Aporte, p: Parametros): ISODate | '' {
 
 /** Fim da fase promocional (exclusivo): início + dias de promoção. */
 export function fimPromocao(a: Aporte): ISODate | null {
-  if (a.indexador !== 'CDI' || a.pctCdiPromo == null || !(a.diasPromo > 0)) return null;
+  if (a.indexador !== 'CDI' || a.pctCdiPromo == null || !(a.diasPromo > 0) || !isISODate(a.dataAporte)) return null;
   return somaDias(a.dataAporte, a.diasPromo);
 }
 
@@ -148,8 +150,11 @@ export function avaliar(a: Aporte, data: ISODate, p: Parametros, cal: Calendario
 export function validarAporte(a: Aporte, p: Parametros): string[] {
   const e: string[] = [];
   if (!a.dataAporte) e.push('Data do aporte');
+  else if (!isISODate(a.dataAporte)) e.push('Data do aporte inválida');
   if (!(a.valor > 0)) e.push('Valor do aporte');
   if (!a.vencimento) e.push('Vencimento');
+  else if (!isISODate(a.vencimento)) e.push('Vencimento inválido');
+  if (a.carenciaAte && !isISODate(a.carenciaAte)) e.push('Carência inválida');
   if (a.dataAporte && a.vencimento && a.vencimento <= a.dataAporte) e.push('Vencimento antes do aporte');
   if (!a.emissor.trim()) e.push('Emissor');
   if (a.indexador === 'CDI') {
