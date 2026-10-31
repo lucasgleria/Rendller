@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { CampoCheck, CampoData, CampoNumero, CampoSelect, CampoTexto } from '../components/campos';
 import { avaliar, fimCarencia, resgatarParcial, validarAporte, type BaseResgate } from '../domain/calculo';
 import type { Linha } from '../domain/carteira';
-import { Calendario } from '../domain/datas';
+import { Calendario, isISODate } from '../domain/datas';
 import { CLASSES, INDEXADORES, LIQUIDEZES, STATUS_MANUAIS, novoAporte } from '../domain/padroes';
 import type { Aporte, Dados, Parametros, Status } from '../domain/types';
 import { data, moeda, pct, rotuloAporte, rotuloClasse } from '../formato';
@@ -193,7 +193,7 @@ function Editor({
   const set = <K extends keyof Aporte>(k: K, v: Aporte[K]) => setA((x) => ({ ...x, [k]: v }));
   const pend = validarAporte(a, p);
   const cal = new Calendario(p.feriados);
-  const datasOk = !!a.dataAporte && !!a.vencimento && a.vencimento > a.dataAporte;
+  const datasOk = isISODate(a.dataAporte) && isISODate(a.vencimento) && a.vencimento > a.dataAporte;
   const h = datasOk ? avaliar(a, a.status === 'Resgatado' && a.resgate?.data ? a.resgate.data : hoje, p, cal) : null;
   const v = datasOk ? avaliar(a, a.vencimento, p, cal) : null;
 

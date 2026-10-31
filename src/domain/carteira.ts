@@ -1,5 +1,5 @@
 import { avaliar, regimeDe, validarAporte, type Avaliacao } from './calculo';
-import { Calendario, diasCorridos, diaNum } from './datas';
+import { Calendario, diasCorridos, diaNum, isISODate } from './datas';
 import type { Aporte, ISODate, Parametros, Status } from './types';
 
 export type Alerta = 'IOF ativo' | 'Vence em breve' | 'Vence em até 90 dias' | 'Vencido sem resgate' | 'Dados faltando' | 'Concentração FGC';
@@ -80,10 +80,11 @@ export function montarLinhas(aportes: Aporte[], hoje: ISODate, p: Parametros): L
   const linhas: Linha[] = aportes.map((a) => {
     const pendencias = validarAporte(a, p);
     const status = statusEfetivo(a, hoje);
-    const okDatas = !!a.dataAporte && !!a.vencimento && a.vencimento > a.dataAporte;
+    // datas inexistentes (ex.: 30/02, de planilha, backup ou nuvem) ficam sem cálculo e aparecem como pendência
+    const okDatas = isISODate(a.dataAporte) && isISODate(a.vencimento) && a.vencimento > a.dataAporte;
     const venc = okDatas ? avaliar(a, a.vencimento, p, cal) : avaliacaoVazia(a);
     const hojeAval = okDatas ? avaliar(a, hoje, p, cal) : avaliacaoVazia(a);
-    const diasParaVencer = a.vencimento ? Math.max(0, diasCorridos(hoje, a.vencimento)) : 0;
+    const diasParaVencer = isISODate(a.vencimento) ? Math.max(0, diasCorridos(hoje, a.vencimento)) : 0;
     const alertas: Alerta[] = [];
     if (pendencias.length) alertas.push('Dados faltando');
     if (status === 'Ativo') {

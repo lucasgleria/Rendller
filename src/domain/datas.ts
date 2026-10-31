@@ -60,8 +60,13 @@ export function maxData(a: ISODate, b: ISODate): ISODate {
   return a > b ? a : b;
 }
 
+/** Data ISO `aaaa-mm-dd` que existe no calendário (30/02 e mês 00 não passam). */
 export function isISODate(s: unknown): boolean {
-  return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(diaNum(s));
+  if (typeof s !== 'string') return false;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return false;
+  const [a, mes, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  return mes >= 1 && mes <= 12 && d >= 1 && d <= diasNoMes(a, mes);
 }
 
 /** Calendário de dias úteis com feriados. */

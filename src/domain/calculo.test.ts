@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { aliquotaIR, avaliar, fimCarencia, percentualIOF, regimeDe, resgatarParcial, validarAporte, type ResgateParcial } from './calculo';
-import { agruparPorInstituicao, montarLinhas, resumir } from './carteira';
+import { agruparPorInstituicao, montarLinhas, resumir, serieProjecao } from './carteira';
 import { APORTES_CARTEIRA_REAL, HOJE_CARTEIRA_REAL, LIQUIDO_HOJE_CARTEIRA_REAL, LIQUIDO_VENCIMENTO_CARTEIRA_REAL } from './carteiraReal.fixture';
 import { inicioConsulta, lerSerieBcb, mesclarCdi, ultimoCdi } from './cdi';
-import { Calendario, diasNoMes, feriadosNacionais, somaDias, somaMeses } from './datas';
+import { Calendario, diasNoMes, feriadosNacionais, isISODate, somaDias, somaMeses } from './datas';
 import { CALENDARIO_ANBIMA } from './feriadosAnbima';
-import { lerFeriadosAnbima } from './importacao';
+import { importarAportes, lerFeriadosAnbima, paraISO } from './importacao';
 import { CLASSES, normalizarParametros, novoAporte, parametrosPadrao } from './padroes';
 import type { Aporte, CdiDia, Classe, Parametros, RegimeTributario } from './types';
 
@@ -507,5 +507,56 @@ describe('classes e regime tributário', () => {
       expect(r[c]).toBeDefined();
       expect(r[c].fonte.trim()).not.toBe('');
     }
+  });
+});
+
+describe('data inexistente não derruba a carteira', () => {
+  it('isISODate exige que o dia exista no mês', () => {
+    expect(isISODate('2026-02-30')).toBe(false);
+    expect(isISODate('2028-02-29')).toBe(true);
+    expect(isISODate('2026-02-29')).toBe(false);
+    expect(isISODate('2026-00-10')).toBe(false);
+    expect(isISODate('2026-13-01')).toBe(false);
+    expect(isISODate('2026-04-31')).toBe(false);
+    expect(isISODate('2026-12-31')).toBe(true);
+    // listas reais continuam inteiras: calendário ANBIMA embutido e feriados nacionais
+    expect(CALENDARIO_ANBIMA.feriados.every(isISODate)).toBe(true);
+    expect(feriadosNacionais(2001, 2099).every(isISODate)).toBe(true);
+  });
+
+  it('montarLinhas com LCI de data inexistente não lança e mostra o problema', () => {
+    const lotes = [
+      cdb({ classe: 'LCI', dataAporte: '2026-02-30', vencimento: '2028-02-30', carenciaAte: '2026-02-31' }),
+      cdb({ classe: 'LCA', dataAporte: 'lixo', vencimento: '2028-01-10', pctCdiPromo: 1.2, diasPromo: 30 }),
+      cdb({ classe: 'LCI', vencimento: venc(730) }),
+    ];
+    const linhas = montarLinhas(lotes, '2026-12-01', p);
+    expect(linhas[0].pendencias).toContain('Data do aporte inválida');
+    expect(linhas[0].pendencias).toContain('Vencimento inválido');
+    expect(linhas[0].pendencias).toContain('Carência inválida');
+    expect(linhas[0].alertas).toContain('Dados faltando');
+    expect(linhas[1].pendencias).toContain('Data do aporte inválida');
+    expect(fimCarencia(lotes[0], p)).toBe('');
+    expect(fimCarencia(lotes[1], p)).toBe('');
+    expect(Number.isFinite(resumir(linhas, p).liquidoHoje)).toBe(true);
+    expect(() => serieProjecao(linhas, p, '2026-12-01')).not.toThrow();
+    expect(() => agruparPorInstituicao(linhas, p)).not.toThrow();
+    expect(linhas[2].pendencias).toEqual([]); // o lote bom segue normal
+  });
+
+  it('importação da planilha com 30/02/2026 trata a data como faltando', () => {
+    expect(paraISO('30/02/2026')).toBe('');
+    expect(paraISO('2026-02-30')).toBe('');
+    expect(paraISO('29/02/2028')).toBe('2028-02-29');
+    const linhas = [
+      ['Data do aporte', 'Banco emissor', 'Valor do aporte (R$)', '% CDI padrão', 'Vencimento'],
+      ['30/02/2026', 'Banco X', 500, 1.03, '10/08/2028'],
+      ['19/08/2026', 'Banco X', 500, 1.03, '31/02/2028'],
+    ];
+    const r = importarAportes(linhas);
+    expect(r.ignoradas).toBe(1); // sem data válida
+    expect(r.aportes.length).toBe(1);
+    expect(r.aportes[0].vencimento).toBe(''); // vencimento inexistente fica como faltando
+    expect(() => montarLinhas(r.aportes, '2026-12-01', p)).not.toThrow();
   });
 });
