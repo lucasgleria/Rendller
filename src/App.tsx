@@ -3,7 +3,7 @@ import { useDados } from './armazenamento';
 import { useCdiOnline } from './cdiOnline';
 import { rotuloSync } from './components/CartaoSincronizacao';
 import { NovaSenhaConta } from './components/ContaForms';
-import { confirmarRecuperacao, contaDisponivel, recuperacaoNaUrl, urlSemRecuperacao } from './conta';
+import { confirmarRecuperacao, contaDisponivel, ErroRecuperacao, recuperacaoNaUrl, urlSemRecuperacao } from './conta';
 import { montarLinhas } from './domain/carteira';
 import { hojeISO } from './domain/datas';
 import Aportes from './pages/Aportes';
@@ -26,7 +26,7 @@ export default function App() {
   const [pagina, setPagina] = useState<Pagina>(paginaInicial);
   // link de "esqueci a senha" da conta: /?token_hash=…&type=recovery (ou um link vencido)
   const [recuperacao] = useState(() => (contaDisponivel() ? recuperacaoNaUrl(location.search, location.hash) : null));
-  const [recuperando, setRecuperando] = useState<'verificando' | 'pronto' | 'erro' | null>(() =>
+  const [recuperando, setRecuperando] = useState<'verificando' | 'pronto' | 'erro' | 'sem-rede' | null>(() =>
     recuperacao ? (recuperacao.tipo === 'token' ? 'verificando' : 'erro') : null,
   );
   useEffect(() => {
@@ -35,7 +35,12 @@ export default function App() {
     if (recuperacao.tipo === 'erro') return limpar();
     confirmarRecuperacao(recuperacao.tokenHash)
       .then(() => (limpar(), setRecuperando('pronto')))
-      .catch(() => (limpar(), setRecuperando('erro')));
+      .catch((e: unknown) => {
+        // sem rede o link ainda vale: a URL fica como está para o usuário reabrir
+        if (e instanceof ErroRecuperacao && e.tipo === 'rede') return setRecuperando('sem-rede');
+        limpar();
+        setRecuperando('erro');
+      });
   }, [recuperacao]);
   const hoje = hojeISO();
   const linhas = useMemo(() => montarLinhas(dados.aportes, hoje, dados.parametros), [dados, hoje]);

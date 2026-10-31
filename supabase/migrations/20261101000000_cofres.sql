@@ -15,7 +15,9 @@ alter table public.cofres enable row level security;
 
 -- Ninguém sem sessão acessa a tabela. Projetos novos não expõem tabelas à Data API por padrão:
 -- o acesso de quem está logado é concedido explicitamente, e a RLS limita à própria linha.
-revoke all on table public.cofres from anon, public;
+-- O revoke de authenticated vem antes do grant: os privilégios padrão do Supabase dariam também
+-- TRUNCATE, REFERENCES e TRIGGER, que o app não usa.
+revoke all on table public.cofres from public, anon, authenticated;
 grant select, insert, update, delete on table public.cofres to authenticated;
 
 drop policy if exists "cofres: dono lê" on public.cofres;

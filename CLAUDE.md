@@ -44,7 +44,7 @@ Antes de dizer que uma mudança está pronta, rode `npm test` e `npm run build`.
 | `src/conta.falso.ts` | `ClienteCofre` falso com a semântica do SQL (só testes importam) |
 | `src/sincronizacaoNucleo.ts` | Núcleo sem React: configs (`rendller:sync:v1` cofre antigo, `rendller:conta:v1` conta), ciclo, ativação e classificação de falhas |
 | `src/sincronizacao.ts` | Hook de sincronização (só efeitos: fila, estado, timers) sobre `Remoto & Cifra`; decisões puras em `domain/sincronia.ts` (`planejarCiclo`, `decidirCiclo`) |
-| `supabase/migrations/`, `supabase/verificacao.sql` | Tabela `cofres` com RLS, `gravar_cofre()` com controle de versão, `ping()`; consultas de verificação manual |
+| `supabase/migrations/`, `supabase/verificacao.sql`, `supabase/README.md` | Tabela `cofres` com RLS, trigger de versão, `gravar_cofre()` e `ping()`; verificação manual com asserções; roteiro de configuração do Supabase e do Netlify ([supabase/README.md](supabase/README.md)) |
 | `netlify/cofre.ts`, `netlify/functions/cofre.mts` | Servidor do cofre (Netlify Function + Netlify Blobs); guarda só conteúdo cifrado |
 | `netlify.toml` | Build, proxy da ANBIMA e cabeçalhos do deploy no Netlify |
 | `src/pages/*.tsx` | Telas: Painel, Aportes, Instituições, Simulador, Parâmetros |

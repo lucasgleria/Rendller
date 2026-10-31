@@ -151,7 +151,10 @@ begin
       perform public.gravar_cofre(0, 'iv', 'x');
       raise exception 'FALHOU: anon chamou gravar_cofre';
     exception when insufficient_privilege then
-      null;
+      -- "sem permissão" (grant) e não "sem sessão" (o 42501 levantado dentro da função)
+      if sqlerrm not like '%permission denied for function%' then
+        raise exception 'FALHOU: anon executou gravar_cofre e só parou dentro dela (%)', sqlerrm;
+      end if;
     end;
 
     raise exception using errcode = 'RB001', message = 'desfazer';
@@ -195,6 +198,13 @@ begin
    where table_schema = 'public' and table_name = 'cofres' and grantee = 'authenticated'
      and privilege_type in ('SELECT', 'INSERT', 'UPDATE', 'DELETE');
   if n <> 4 then raise exception 'FALHOU: authenticated deveria ter SELECT, INSERT, UPDATE e DELETE (tem %)', n; end if;
+  select count(*) into n from information_schema.role_table_grants
+   where table_schema = 'public' and table_name = 'cofres' and grantee = 'authenticated'
+     and privilege_type not in ('SELECT', 'INSERT', 'UPDATE', 'DELETE');
+  if n <> 0 then raise exception 'FALHOU: authenticated tem % privilégio(s) além de SELECT, INSERT, UPDATE e DELETE', n; end if;
+  if has_function_privilege('anon', 'public.gravar_cofre(integer,text,text)', 'execute') then
+    raise exception 'FALHOU: anon pode executar gravar_cofre';
+  end if;
   if not exists (select 1 from pg_trigger where tgrelid = 'public.cofres'::regclass and tgname = 'cofres_versao_sequencial') then
     raise exception 'FALHOU: trigger cofres_versao_sequencial ausente';
   end if;

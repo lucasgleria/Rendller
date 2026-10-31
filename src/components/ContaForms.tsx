@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { definirNovaSenha, entrar, esqueciSenha, MENSAGEM_LINK_VENCIDO, sair, type Sessao } from '../conta';
+import { definirNovaSenha, entrar, esqueciSenha, MENSAGEM_LINK_VENCIDO, MENSAGEM_RECUPERACAO_SEM_REDE, sair, type Sessao } from '../conta';
 
 /** Frase curta mostrada sempre que a conta aparece: dois segredos diferentes. */
 export const DOIS_SEGREDOS =
@@ -91,7 +91,7 @@ export function EntrarNaConta({
 }
 
 /** Aberta pelo link de recuperação: define a nova senha da conta. Não mexe na frase-senha nem nos dados. */
-export function NovaSenhaConta({ aoTerminar, estado }: { aoTerminar: () => void; estado: 'verificando' | 'pronto' | 'erro' }) {
+export function NovaSenhaConta({ aoTerminar, estado }: { aoTerminar: () => void; estado: 'verificando' | 'pronto' | 'erro' | 'sem-rede' }) {
   const [senha, setSenha] = useState('');
   const [repetida, setRepetida] = useState('');
   const [ocupado, setOcupado] = useState(false);
@@ -121,7 +121,7 @@ export function NovaSenhaConta({ aoTerminar, estado }: { aoTerminar: () => void;
           <p className="mut">Conferindo o link de recuperação…</p>
         ) : (
           <>
-            <div className="aviso vermelho">{MENSAGEM_LINK_VENCIDO}</div>
+            <div className={`aviso ${estado === 'sem-rede' ? 'amarelo' : 'vermelho'}`}>{estado === 'sem-rede' ? MENSAGEM_RECUPERACAO_SEM_REDE : MENSAGEM_LINK_VENCIDO}</div>
             <button className="btn" onClick={aoTerminar}>
               Fechar
             </button>
