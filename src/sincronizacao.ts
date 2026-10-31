@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apagarCofre, cifrar, decifrar, derivarCredenciais, gravarCofre, lerCofre, type Credenciais } from './cofre';
-import { daNuvem, impressao, paraNuvem } from './domain/sincronia';
+import type { Carga } from './armazenamento';
+import { ajustarImpressaoAposMigracao, daNuvem, decidirCiclo, impressao, paraNuvem } from './domain/sincronia';
 import type { Dados } from './domain/types';
 
 const CHAVE_CONFIG = 'rendller:sync:v1';
@@ -37,6 +38,15 @@ function lerConfig(): ConfigSync | null {
   }
 }
 
+/** Config salva; depois da migração v1 → v2 a impressão passa a assinar os dados migrados (sem falso "pendente"). */
+function configInicial(dados: Dados, carga: Pick<Carga, 'origem' | 'brutoV1'>): ConfigSync | null {
+  const c = lerConfig();
+  if (!c || carga.origem !== 'v1') return c;
+  const ajustada = ajustarImpressaoAposMigracao(c, carga.brutoV1, dados);
+  if (ajustada !== c) gravarConfig(ajustada);
+  return ajustada;
+}
+
 function gravarConfig(c: ConfigSync | null) {
   try {
     if (c) localStorage.setItem(CHAVE_CONFIG, JSON.stringify(c));
@@ -62,11 +72,11 @@ function semRede(e: unknown): boolean {
  * Sincroniza os dados entre aparelhos por um cofre cifrado (ver `cofre.ts`). Busca a versão da nuvem ao abrir,
  * ao voltar para a aba, ao reconectar e a cada 2 minutos; envia as alterações locais 1,5 s depois da última edição.
  * Se os dois lados mudaram, nada é sobrescrito: o usuário escolhe qual versão fica.
- * Com `semEnvio` (dados locais ilegíveis e ainda não editados), nada é enviado automaticamente: o vazio local
- * não pode ir por cima do cofre; uma versão mais nova da nuvem ainda é aplicada.
+ * Se os dados locais estavam ilegíveis ao abrir, o cofre é baixado e aplicado mesmo na mesma versão; nada local
+ * vai por cima dele (uma edição feita antes do download vira conflito). `podeGravar` vem de `useDados`.
  */
-export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, semEnvio = false) {
-  const [config, setConfigEstado] = useState<ConfigSync | null>(lerConfig);
+export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, carga: Pick<Carga, 'origem' | 'brutoV1'>, podeGravar: boolean) {
+  const [config, setConfigEstado] = useState<ConfigSync | null>(() => configInicial(dados, carga));
   const [status, setStatus] = useState<StatusSync>(() => (lerConfig() ? 'sincronizando' : 'desligado'));
   const [erro, setErro] = useState<string | null>(null);
   const [conflito, setConflito] = useState<Conflito | null>(null);
@@ -74,8 +84,10 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, s
   const configRef = useRef(config);
   const dadosRef = useRef(dados);
   dadosRef.current = dados;
-  const semEnvioRef = useRef(semEnvio);
-  semEnvioRef.current = semEnvio;
+  const podeGravarRef = useRef(podeGravar);
+  podeGravarRef.current = podeGravar;
+  /** Dados locais ilegíveis ao abrir e cofre ainda não baixado. */
+  const aguardandoCofre = useRef(carga.origem === 'ilegivel');
   const fila = useRef<Promise<void>>(Promise.resolve());
   const conflitoRef = useRef(conflito);
   conflitoRef.current = conflito;
@@ -108,6 +120,7 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, s
 
   const aplicarRemoto = useCallback(
     (c: ConfigSync, remoto: Dados, versao: number) => {
+      aguardandoCofre.current = false;
       if (impressao(remoto) !== impressao(dadosRef.current)) {
         guardarCopia(dadosRef.current);
         substituir(remoto);
@@ -125,6 +138,7 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, s
       const r = await gravarCofre(c.cred, base, await cifrar(c.cred, paraNuvem(d)));
       if (r.tipo === 'conflito') return false;
       if (r.tipo !== 'ok') throw new Error('O servidor recusou a gravação.');
+      aguardandoCofre.current = false; // envio só por decisão do usuário quando os dados eram ilegíveis
       salvarConfig({ ...c, versao: r.versao, impressao: impressao(d), ultimaSync: new Date().toISOString() });
       return true;
     },
@@ -140,17 +154,27 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, s
       if (r.tipo === 'negado') throw new Error('A nuvem recusou o acesso deste aparelho. Desative e ative a sincronização de novo.');
       if (r.tipo === 'inexistente') throw new Error('Os dados não existem mais na nuvem (foram apagados em outro aparelho?). Desative e ative de novo para recriar.');
       if (r.tipo !== 'ok') return;
-      const pendente = !semEnvioRef.current && impressao(dadosRef.current) !== c.impressao;
-      if (r.versao !== c.versao && r.envelope) {
-        const remoto = daNuvem(await decifrar(c.cred, r.envelope), dadosRef.current);
-        if (!pendente || impressao(remoto) === impressao(dadosRef.current)) {
-          aplicarRemoto(c, remoto, r.versao);
-        } else {
-          setConflito({ remoto, versao: r.versao, atualizadoEm: r.atualizadoEm });
-          setStatus('conflito');
-          return;
-        }
-      } else if (pendente && !(await enviar(c, c.versao))) {
+      const local = dadosRef.current;
+      const ilegivel = aguardandoCofre.current;
+      const precisaRemoto = ilegivel || r.versao !== c.versao;
+      const remoto = precisaRemoto && r.envelope ? daNuvem(await decifrar(c.cred, r.envelope), local) : null;
+      const decisao =
+        precisaRemoto && !remoto
+          ? 'nada'
+          : decidirCiclo({
+              versaoLocal: c.versao,
+              versaoRemota: r.versao,
+              pendente: impressao(local) !== c.impressao,
+              ilegivel,
+              editadoDesdeIlegivel: podeGravarRef.current,
+              remotoIgualLocal: remoto ? impressao(remoto) === impressao(local) : undefined,
+            });
+      if (decisao === 'aplicar' && remoto) aplicarRemoto(c, remoto, r.versao);
+      else if (decisao === 'conflito' && remoto) {
+        setConflito({ remoto, versao: r.versao, atualizadoEm: r.atualizadoEm });
+        setStatus('conflito');
+        return;
+      } else if (decisao === 'enviar' && !(await enviar(c, c.versao))) {
         if (tentativa < 1) return ciclo(tentativa + 1); // alguém gravou entre a leitura e a escrita
         throw new Error('Outro aparelho está gravando ao mesmo tempo. Tente de novo.');
       }
@@ -168,11 +192,11 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, s
   // Alteração local → envia depois de uma pausa nas edições.
   useEffect(() => {
     const c = configRef.current;
-    if (!c || conflitoRef.current || semEnvio || impressao(dados) === c.impressao) return;
+    if (!c || conflitoRef.current || impressao(dados) === c.impressao) return;
     setStatus((s) => (s === 'offline' || s === 'erro' ? s : 'pendente'));
     const t = setTimeout(() => void sincronizar(), ESPERA_ENVIO_MS);
     return () => clearTimeout(t);
-  }, [dados, semEnvio, sincronizar]);
+  }, [dados, sincronizar]);
 
   // Ao abrir, ao voltar para a aba, ao reconectar e periodicamente.
   useEffect(() => {

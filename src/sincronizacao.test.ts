@@ -3,7 +3,8 @@ import { tratarCofre, type Armazem, type Registro } from '../netlify/cofre';
 import { cifrar, decifrar, derivarCredenciais, gravarCofre, lerCofre, apagarCofre } from './cofre';
 import { aplicarConsultaCdi } from './domain/cdi';
 import { novoAporte, parametrosPadrao } from './domain/padroes';
-import { daNuvem, impressao, jsonEstavel, paraNuvem } from './domain/sincronia';
+import { migrarDados } from './domain/migracao';
+import { ajustarImpressaoAposMigracao, daNuvem, decidirCiclo, impressao, jsonEstavel, paraNuvem } from './domain/sincronia';
 import type { Dados } from './domain/types';
 
 const FRASE = 'cavalo bateria grampo correto';
@@ -14,6 +15,13 @@ function dados(n = 1): Dados {
     aportes: Array.from({ length: n }, (_, i) => novoAporte({ id: `a${i}`, emissor: 'PagBank', valor: 500, dataAporte: '2026-08-19', vencimento: '2028-08-10' })),
     parametros: parametrosPadrao(),
   };
+}
+
+/** Dados como o app anterior gravava (v1): aportes com `tipo`, parâmetros sem `regimes`. */
+function brutoV1(n: number): Record<string, unknown> {
+  const { regimes: _, ...parametros } = parametrosPadrao();
+  const aportes = dados(n).aportes.map(({ classe: __, ...a }) => ({ ...a, tipo: 'CDB Pós-fixado' }));
+  return JSON.parse(JSON.stringify({ versao: 1, aportes, parametros }));
 }
 
 /** Armazém em memória com ETag, como o Netlify Blobs. */
@@ -109,6 +117,69 @@ describe('o que sincroniza', () => {
   });
   it('JSON estável não depende da ordem das chaves', () => {
     expect(jsonEstavel({ b: 1, a: [{ d: 2, c: undefined, e: null }] })).toBe(jsonEstavel({ a: [{ e: null, d: 2 }], b: 1 }));
+  });
+});
+
+describe('sincronização depois da migração para v2', () => {
+  const pend = (d: Dados, c: { impressao: string }) => impressao(d) !== c.impressao;
+
+  it('paraNuvem sobre o bruto v1 reproduz o texto que o app antigo assinava', () => {
+    // O app antigo assinava { versao: 1, aportes, parametros sem o CDI público }, exatamente como gravado.
+    const bruto = brutoV1(2);
+    const { cdiDiario: _h, cdiAtualizadoEm: _a, cdiAnual: _c, cdiData: _d, cdiFonte: _f, ...parametros } = bruto.parametros as Record<string, unknown>;
+    expect(jsonEstavel(paraNuvem(bruto as unknown as Dados))).toBe(jsonEstavel({ versao: 1, aportes: bruto.aportes, parametros }));
+  });
+
+  it('aparelho com config v1 sem edição não fica pendente depois da migração', () => {
+    const bruto = brutoV1(2);
+    const config = { versao: 5, impressao: impressao(bruto as unknown as Dados), outro: 'x' };
+    const migrados = migrarDados(bruto);
+    expect(pend(migrados, config)).toBe(true); // sem o ajuste, o formato novo pareceria uma edição
+    const c = ajustarImpressaoAposMigracao(config, bruto, migrados);
+    expect(c).toEqual({ ...config, impressao: impressao(migrados) });
+    expect(decidirCiclo({ versaoLocal: 5, versaoRemota: 5, pendente: pend(migrados, c), ilegivel: false, editadoDesdeIlegivel: false })).toBe('nada');
+  });
+
+  it('aparelho atrasado sem edição baixa o remoto sem conflito', () => {
+    const bruto = brutoV1(2);
+    const migrados = migrarDados(bruto);
+    const c = ajustarImpressaoAposMigracao({ versao: 5, impressao: impressao(bruto as unknown as Dados) }, bruto, migrados);
+    expect(decidirCiclo({ versaoLocal: 5, versaoRemota: 7, pendente: pend(migrados, c), ilegivel: false, editadoDesdeIlegivel: false })).toBe('aplicar');
+  });
+
+  it('edição real continua pendente', () => {
+    const bruto = brutoV1(2);
+    const migrados = migrarDados(bruto);
+    // edição feita no app antigo e ainda não enviada: a config assinou outro conteúdo
+    const antiga = { versao: 5, impressao: impressao(brutoV1(1) as unknown as Dados) };
+    const c = ajustarImpressaoAposMigracao(antiga, bruto, migrados);
+    expect(c).toBe(antiga);
+    expect(pend(migrados, c)).toBe(true);
+    expect(decidirCiclo({ versaoLocal: 5, versaoRemota: 5, pendente: true, ilegivel: false, editadoDesdeIlegivel: false })).toBe('enviar');
+    // edição depois da migração
+    const c2 = ajustarImpressaoAposMigracao({ versao: 5, impressao: impressao(bruto as unknown as Dados) }, bruto, migrados);
+    const editado = { ...migrados, aportes: [...migrados.aportes, novoAporte({ id: 'novo' })] };
+    expect(pend(editado, c2)).toBe(true);
+  });
+});
+
+describe('decisão do ciclo de sincronização', () => {
+  const base = { versaoLocal: 3, versaoRemota: 3, pendente: false, ilegivel: false, editadoDesdeIlegivel: false };
+  it('mesma versão: envia só se houver alteração', () => {
+    expect(decidirCiclo(base)).toBe('nada');
+    expect(decidirCiclo({ ...base, pendente: true })).toBe('enviar');
+  });
+  it('nuvem mais nova: aplica, ou conflito se os dois lados mudaram', () => {
+    expect(decidirCiclo({ ...base, versaoRemota: 4 })).toBe('aplicar');
+    expect(decidirCiclo({ ...base, versaoRemota: 4, pendente: true })).toBe('conflito');
+    expect(decidirCiclo({ ...base, versaoRemota: 4, pendente: true, remotoIgualLocal: true })).toBe('aplicar');
+  });
+  it('dados locais ilegíveis: baixa o cofre mesmo na mesma versão e nunca envia', () => {
+    expect(decidirCiclo({ ...base, ilegivel: true, pendente: true })).toBe('aplicar');
+    expect(decidirCiclo({ ...base, ilegivel: true, versaoRemota: 4 })).toBe('aplicar');
+    // editou antes do download (ex.: sem rede): o usuário escolhe
+    expect(decidirCiclo({ ...base, ilegivel: true, pendente: true, editadoDesdeIlegivel: true })).toBe('conflito');
+    expect(decidirCiclo({ ...base, ilegivel: true, pendente: true, editadoDesdeIlegivel: true, remotoIgualLocal: true })).toBe('aplicar');
   });
 });
 

@@ -1,3 +1,4 @@
+import { CLASSES } from './domain/padroes';
 import type { Aporte, ISODate } from './domain/types';
 
 const brl = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -35,10 +36,17 @@ export function mostrarNumero(v: number | null | undefined, casas = 2): string {
   return v.toLocaleString('pt-BR', { maximumFractionDigits: casas, useGrouping: false });
 }
 
-/** Rótulo curto do aporte: classe + indexador (ex.: "CDB · 103% do CDI", "CDB · Prefixado"). */
+/** Rótulo de exibição da classe, o mesmo do select; classe desconhecida (versão mais nova) aparece como veio. */
+export function rotuloClasse(c: string): string {
+  return CLASSES.find((x) => x.valor === c)?.rotulo ?? c;
+}
+
+/** Rótulo curto do aporte: classe + indexador (ex.: "CDB · 103% do CDI", "CDB · 103,25% do CDI", "CDB · Prefixado"). */
 export function rotuloAporte(a: Aporte): string {
-  if (a.indexador === 'PRE') return `${a.classe} · Prefixado`;
-  if (a.indexador === 'IPCA') return `${a.classe} · IPCA+`;
-  const casas = Number.isFinite(a.pctCdi) && Math.round(a.pctCdi * 1000) % 10 ? 1 : 0;
-  return `${a.classe} · ${pct(a.pctCdi, casas)} do CDI`;
+  const classe = rotuloClasse(a.classe);
+  if (a.indexador === 'PRE') return `${classe} · Prefixado`;
+  if (a.indexador === 'IPCA') return `${classe} · IPCA+`;
+  // Sem casas fixas: 103%, 108,5% e 103,25% aparecem como foram contratados.
+  const p = Number.isFinite(a.pctCdi) ? `${(a.pctCdi * 100).toLocaleString('pt-BR', { maximumFractionDigits: 4 })}%` : '—';
+  return `${classe} · ${p} do CDI`;
 }
