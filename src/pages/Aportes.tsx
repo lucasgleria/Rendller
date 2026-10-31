@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { CampoCheck, CampoData, CampoNumero, CampoSelect, CampoTexto } from '../components/campos';
-import { avaliar, resgatarParcial, validarAporte, type BaseResgate } from '../domain/calculo';
+import { avaliar, fimCarencia, resgatarParcial, validarAporte, type BaseResgate } from '../domain/calculo';
 import type { Linha } from '../domain/carteira';
 import { Calendario } from '../domain/datas';
 import { CLASSES, INDEXADORES, LIQUIDEZES, STATUS_MANUAIS, novoAporte } from '../domain/padroes';
@@ -25,6 +25,12 @@ export function descreverTaxa(a: Aporte): string {
   if (a.indexador === 'IPCA') return a.spreadIpca == null ? '—' : `IPCA + ${pct(a.spreadIpca)}`;
   const base = `${pct(a.pctCdi, a.pctCdi * 100 % 1 ? 1 : 0)} CDI`;
   return a.pctCdiPromo != null && a.diasPromo > 0 ? `${pct(a.pctCdiPromo, 0)} por ${a.diasPromo} d → ${base}` : base;
+}
+
+/** Mostra a carência efetiva quando a mínima da classe vai além da informada. */
+function dicaCarencia(a: Aporte, p: Parametros): string | undefined {
+  const fim = fimCarencia(a, p);
+  return fim && fim !== a.carenciaAte ? `Mínima da classe: até ${data(fim)}` : undefined;
 }
 
 export default function Aportes({ linhas, parametros, hoje, atualizar }: Props) {
@@ -340,7 +346,7 @@ function Editor({
           <legend>Liquidez</legend>
           <div className="campos">
             <CampoSelect rotulo="Liquidez" valor={a.liquidez} opcoes={LIQUIDEZES} onChange={(x) => set('liquidez', x)} />
-            <CampoData rotulo="Carência até" valor={a.carenciaAte} onChange={(x) => set('carenciaAte', x)} />
+            <CampoData rotulo="Carência até" valor={a.carenciaAte} onChange={(x) => set('carenciaAte', x)} dica={dicaCarencia(a, p)} />
             <CampoCheck rotulo="Permite resgate antecipado" valor={a.permiteResgateAntecipado} onChange={(x) => set('permiteResgateAntecipado', x)} />
           </div>
         </fieldset>

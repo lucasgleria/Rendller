@@ -13,7 +13,7 @@ function memoria(inicial: Record<string, string> = {}) {
 }
 
 function brutoV1(n: number): string {
-  const { regimes: _, ...parametros } = parametrosPadrao();
+  const { regimes: _, regimesVersao: _v, ...parametros } = parametrosPadrao();
   const aportes = Array.from({ length: n }, (_, i) => {
     const { classe: __, ...a } = novoAporte({ id: `a${i}`, emissor: 'PagBank', valor: 500, dataAporte: '2026-08-19', vencimento: '2028-08-10' });
     return { ...a, tipo: 'CDB Pós-fixado' };

@@ -70,6 +70,7 @@ export default function Instituicoes({ linhas, parametros: p }: { linhas: Linha[
                     <div className="linha2">
                       {g.aportes} aporte{g.aportes === 1 ? '' : 's'}
                       {g.emissores.length > 1 || (g.emissores[0] && g.emissores[0] !== g.nome) ? ` · ${g.emissores.join(', ')}` : ''}
+                      {g.exposicaoSemFgc > 0 ? ` · ${moeda(g.exposicaoSemFgc)} sem FGC` : ''}
                     </div>
                   </td>
                   <td className="num">{moeda(g.aportado)}</td>

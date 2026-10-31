@@ -19,7 +19,7 @@ function dados(n = 1): Dados {
 
 /** Dados como o app anterior gravava (v1): aportes com `tipo`, parâmetros sem `regimes`. */
 function brutoV1(n: number): Record<string, unknown> {
-  const { regimes: _, ...parametros } = parametrosPadrao();
+  const { regimes: _, regimesVersao: _v, ...parametros } = parametrosPadrao();
   const aportes = dados(n).aportes.map(({ classe: __, ...a }) => ({ ...a, tipo: 'CDB Pós-fixado' }));
   return JSON.parse(JSON.stringify({ versao: 1, aportes, parametros }));
 }
@@ -103,6 +103,7 @@ describe('o que sincroniza', () => {
     const antigo = JSON.parse(JSON.stringify(paraNuvem(dados(2))));
     antigo.versao = 1;
     delete antigo.parametros.regimes;
+    delete antigo.parametros.regimesVersao;
     for (const a of antigo.aportes) {
       delete a.classe;
       a.tipo = 'CDB Pós-fixado';

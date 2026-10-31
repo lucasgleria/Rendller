@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { CampoData, CampoNumero, CampoSelect, CampoTexto } from '../components/campos';
-import { avaliar, validarAporte } from '../domain/calculo';
+import { avaliar, fimCarencia, regimeDe, validarAporte } from '../domain/calculo';
 import { agruparPorInstituicao, mesesEntre, type Linha } from '../domain/carteira';
 import { Calendario, somaDias } from '../domain/datas';
-import { INDEXADORES, LIQUIDEZES, novoAporte } from '../domain/padroes';
+import { migrarAporte } from '../domain/migracao';
+import { CLASSES, INDEXADORES, LIQUIDEZES, novoAporte } from '../domain/padroes';
 import type { Aporte, Parametros } from '../domain/types';
-import { data, moeda, pct } from '../formato';
+import { data, moeda, pct, rotuloClasse } from '../formato';
 import { descreverTaxa } from './Aportes';
 
 const CHAVE = 'rendller:simulador:v1';
@@ -13,7 +14,8 @@ const CHAVE = 'rendller:simulador:v1';
 function opcoesIniciais(hoje: string): Aporte[] {
   try {
     const s = localStorage.getItem(CHAVE);
-    if (s) return JSON.parse(s) as Aporte[];
+    // opções salvas antes das classes vêm com `tipo`: passam pela mesma migração dos aportes
+    if (s) return (JSON.parse(s) as unknown[]).map(migrarAporte);
   } catch {
     /* sem armazenamento: começa do zero */
   }
@@ -41,7 +43,8 @@ export default function Simulador({ parametros: p, linhas, hoje }: { parametros:
     const pend = validarAporte({ ...a, emissor: a.emissor || '-' }, p);
     const r = pend.length ? null : avaliar(a, a.vencimento, p, cal);
     const exposAtual = grupos.find((g) => g.nome === (a.conglomerado || a.emissor).trim())?.exposicaoFgc ?? 0;
-    return { a, r, pend, meses: r ? mesesEntre(a.dataAporte, a.vencimento) : 0, exposDepois: exposAtual + a.valor };
+    // só classes com FGC somam na exposição garantida do conglomerado
+    return { a, r, pend, meses: r ? mesesEntre(a.dataAporte, a.vencimento) : 0, exposDepois: exposAtual + (regimeDe(a, p).fgc ? a.valor : 0) };
   });
   const validos = resultados.filter((x) => x.r && x.r.calculavel);
   const maiorGanho = validos.reduce<(typeof validos)[number] | null>((m, x) => (!m || x.r!.rendimentoLiquido > m.r!.rendimentoLiquido ? x : m), null);
@@ -88,6 +91,7 @@ export default function Simulador({ parametros: p, linhas, hoje }: { parametros:
             </div>
             <div className="campos" style={{ gridTemplateColumns: '1fr 1fr' }}>
               <CampoTexto rotulo="Emissor" valor={a.emissor} onChange={(x) => set(i, { emissor: x })} />
+              <CampoSelect rotulo="Classe" valor={a.classe} opcoes={CLASSES} onChange={(x) => set(i, { classe: x })} />
               <CampoNumero rotulo="Valor (R$)" valor={a.valor || null} onChange={(x) => set(i, { valor: x ?? 0 })} />
               <CampoData rotulo="Data do aporte" valor={a.dataAporte} onChange={(x) => set(i, { dataAporte: x })} />
               <CampoData rotulo="Vencimento" valor={a.vencimento} onChange={(x) => set(i, { vencimento: x })} />
@@ -138,7 +142,7 @@ export default function Simulador({ parametros: p, linhas, hoje }: { parametros:
               <Linha rotulo="Retorno líquido no período" vals={resultados.map((x) => (x.r ? pct(x.r.rentabilidadeLiquida) : '—'))} />
               <Linha rotulo="Ganho líquido por mês" vals={resultados.map((x) => (x.r && x.meses > 0 ? moeda(x.r.rendimentoLiquido / x.meses) : '—'))} />
               <Linha rotulo="Taxa líquida anualizada" vals={resultados.map((x) => (x.r ? pct(x.r.taxaLiquidaAnual) : '—'))} forte />
-              <Linha rotulo="Liquidez" vals={resultados.map((x) => x.a.liquidez + (x.a.carenciaAte ? ` · carência até ${data(x.a.carenciaAte)}` : ''))} />
+              <Linha rotulo="Liquidez" vals={resultados.map((x) => { const fim = fimCarencia(x.a, p); return `${rotuloClasse(x.a.classe)} · ${x.a.liquidez}${fim ? ` · carência até ${data(fim)}` : ''}`; })} />
               <Linha
                 rotulo="Exposição no emissor depois"
                 vals={resultados.map((x) => (x.a.emissor ? `${moeda(x.exposDepois)} (${pct(x.exposDepois / p.fgcLimitePorInstituicao, 0)} do FGC)` : '—'))}

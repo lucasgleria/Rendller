@@ -16,6 +16,16 @@ export function somaDias(iso: ISODate, dias: number): ISODate {
   return deDiaNum(diaNum(iso) + dias);
 }
 
+/** Soma meses mantendo o dia do mês; se o dia não existe no mês de destino, usa o último dia (31/08 + 6 = 28/02). */
+export function somaMeses(iso: ISODate, meses: number): ISODate {
+  const [a, m, d] = iso.split('-').map(Number);
+  const total = a * 12 + (m - 1) + meses;
+  const ano = Math.floor(total / 12);
+  const mes = total - ano * 12; // 0 = janeiro
+  const ultimo = new Date(Date.UTC(ano, mes + 1, 0)).getUTCDate();
+  return `${String(ano).padStart(4, '0')}-${String(mes + 1).padStart(2, '0')}-${String(Math.min(d, ultimo)).padStart(2, '0')}`;
+}
+
 /** Dias corridos de `a` até `b` (b − a). */
 export function diasCorridos(a: ISODate, b: ISODate): number {
   return diaNum(b) - diaNum(a);

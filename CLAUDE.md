@@ -94,6 +94,10 @@ IR e IOF incidem **sobre o rendimento, nunca sobre o principal**.
 **IR regressivo (referência 2026):** até 180 dias 22,5% · 181 a 360 dias 20% · 361 a 720 dias 17,5% · acima de 720 dias 15%.
 **IOF:** 96% no dia 1 caindo até 3% no dia 29; 0% do dia 30 em diante (tabela completa em `padroes.ts`).
 
+**Regime tributário por classe:** cada aporte tem uma `classe` (CDB, RDB, LC, LCI, LCA ou Outro), separada do `indexador`. `Parametros.regimes[classe]` diz se o IR é regressivo ou isento, se há IOF, se há FGC e a carência mínima; `regimeDe()` lê o regime e uma classe sem regime usa o de `Outro` (e `validarAporte` acusa "Classe desconhecida"). Com IR isento, a alíquota é zero; sem IOF, o IOF é zero; a ordem dos impostos não muda. Padrões conferidos em fonte oficial em 31/10/2026 (fonte em cada regime): CDB, RDB e LC com IR regressivo, IOF e FGC, sem carência; LCI isenta de IR, IOF pela regra legal (nulo na prática, pela carência), carência de 6 meses (36 se corrigida mensalmente por índice de preços); LCA isenta de IR, IOF com alíquota zero, carência de 6 meses (12 com índice de preços). Os regimes são editáveis em Parâmetros; `regimesVersao` permite corrigir um padrão sem perder o que o usuário editou.
+
+**Carência (em meses):** `fimCarencia()` é a maior entre a `carenciaAte` do lote e `somaMeses(dataAporte, carenciaMinimaMeses)` (mesmo dia do mês; se ele não existe, o último dia do mês). Com indexador IPCA numa classe com `carenciaMinimaMesesIndicePrecos`, o app não deduz a carência (a mínima depende da periodicidade da correção): `validarAporte` exige `carenciaAte`. `validarAporte` também acusa carência menor que a mínima da classe, e o resgate parcial respeita `fimCarencia()`.
+
 **Taxa líquida anualizada:** `(valor_liquido / aporte)^(252 / dias_uteis) − 1`.
 
 **Arredondamento:** só na exibição. Cálculos intermediários mantêm precisão total.
@@ -107,6 +111,7 @@ IR e IOF incidem **sobre o rendimento, nunca sobre o principal**.
 - Cobertura ordinária: até **R$ 250.000 por CPF por instituição ou conglomerado**.
 - Limite global: **R$ 1.000.000** em garantias a cada **quatro anos**.
 - A exposição considera **principal + rendimentos**.
+- Só as classes com `fgc: true` no regime contam na exposição garantida (`Grupo.exposicaoFgc`); as demais aparecem em `exposicaoSemFgc` e não entram no limite nem nos alertas de concentração.
 - A cobertura é por **emissor/conglomerado**, não pela corretora onde o título foi comprado. No app: `instituicao` = plataforma/corretora, `emissor` = banco emissor, `conglomerado` = grupo para o FGC (vazio usa o emissor).
 - Confirme se o emissor é associado ao FGC quando isso for relevante.
 
@@ -125,6 +130,10 @@ Qualquer mudança no motor precisa manter (e, se for regra nova, ganhar) testes 
 - [ ] Resgate parcial (divisão proporcional, contagem tributária mantida, soma das partes = lote original)
 - [ ] CDI realizado (dias com dado usam o CDI do dia, lacunas e futuro usam a projeção, fim de semana/feriado ignorados)
 - [ ] Calendário ANBIMA embutido = regra dos feriados nacionais (2001–2099); migração da lista antiga
+- [ ] Classe isenta (IR zero, IOF conforme o regime) e comparação CDB × LCA pelo líquido
+- [ ] Carência mínima em meses (`somaMeses`, resgate parcial bloqueado, `validarAporte`, LCI/LCA com IPCA exige carência informada)
+- [ ] FGC por classe (só classes com FGC somam na exposição garantida); classe desconhecida cai em `Outro` sem quebrar
+- [ ] Regimes salvos: padrão antigo sem edição é atualizado, edição do usuário é mantida, dados da Fase 1 (carência em dias) são lidos
 - [ ] Formato salvo (`src/domain/migracao.test.ts`, `src/armazenamento.test.ts`): v1 → v2 sem perder aporte nem mudar números, recusa de versão futura, conteúdo ilegível guardado e nunca sobrescrito
 - [ ] Sincronização (`src/sincronizacao.test.ts`): criptografia, o que sincroniza, servidor (autorização, versão, gravação simultânea), dois aparelhos
 

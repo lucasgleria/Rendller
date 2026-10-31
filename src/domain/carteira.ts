@@ -1,4 +1,4 @@
-import { avaliar, validarAporte, type Avaliacao } from './calculo';
+import { avaliar, regimeDe, validarAporte, type Avaliacao } from './calculo';
 import { Calendario, diasCorridos, diaNum } from './datas';
 import type { Aporte, ISODate, Parametros, Status } from './types';
 
@@ -29,7 +29,10 @@ export interface Grupo {
   rendimentoLiquidoHoje: number;
   liquidoVencimento: number;
   percentualCarteira: number; // pela exposição (principal + rendimentos)
+  /** Principal + rendimentos das classes com FGC. */
   exposicaoFgc: number;
+  /** Principal + rendimentos das classes sem FGC (não contam no limite nem na cobertura). */
+  exposicaoSemFgc: number;
   coberturaFgc: number;
   excessoFgc: number;
   alertaFgc: 'ok' | 'próximo' | 'acima';
@@ -105,7 +108,7 @@ export function montarLinhas(aportes: Aporte[], hoje: ISODate, p: Parametros): L
   // Concentração: marca as linhas de grupos próximos ou acima do limite do FGC.
   const grupos = agruparPorInstituicao(linhas, p);
   const criticos = new Set(grupos.filter((g) => g.alertaFgc !== 'ok').map((g) => g.nome));
-  for (const l of linhas) if (contaNoSaldo(l) && criticos.has(l.grupoFgc)) l.alertas.push('Concentração FGC');
+  for (const l of linhas) if (contaNoSaldo(l) && criticos.has(l.grupoFgc) && regimeDe(l.aporte, p).fgc) l.alertas.push('Concentração FGC');
   return linhas;
 }
 
@@ -148,6 +151,7 @@ export function agruparPorInstituicao(linhas: Linha[], p: Parametros): Grupo[] {
         liquidoVencimento: 0,
         percentualCarteira: 0,
         exposicaoFgc: 0,
+        exposicaoSemFgc: 0,
         coberturaFgc: 0,
         excessoFgc: 0,
         alertaFgc: 'ok',
@@ -161,13 +165,14 @@ export function agruparPorInstituicao(linhas: Linha[], p: Parametros): Grupo[] {
     g.liquidoHoje += l.hoje.liquido;
     g.rendimentoLiquidoHoje += l.hoje.rendimentoLiquido;
     g.liquidoVencimento += l.vencimento.liquido;
+    // FGC cobre principal + rendimentos, por CPF e por conglomerado, só nas classes garantidas (CLAUDE.md seção 5).
+    if (regimeDe(l.aporte, p).fgc) g.exposicaoFgc += l.hoje.bruto;
+    else g.exposicaoSemFgc += l.hoje.bruto;
     mapa.set(l.grupoFgc, g);
   }
   const grupos = [...mapa.values()];
   const total = grupos.reduce((s, g) => s + g.brutoHoje, 0);
   for (const g of grupos) {
-    // FGC cobre principal + rendimentos, por CPF e por conglomerado (CLAUDE.md seção 5).
-    g.exposicaoFgc = g.brutoHoje;
     g.coberturaFgc = Math.min(g.exposicaoFgc, p.fgcLimitePorInstituicao);
     g.excessoFgc = Math.max(0, g.exposicaoFgc - p.fgcLimitePorInstituicao);
     g.alertaFgc = g.excessoFgc > 0 ? 'acima' : g.exposicaoFgc >= p.fgcAlertaFracao * p.fgcLimitePorInstituicao ? 'próximo' : 'ok';
