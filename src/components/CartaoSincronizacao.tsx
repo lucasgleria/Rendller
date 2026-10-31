@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { TAMANHO_MINIMO_FRASE } from '../cofre';
 import { contaDisponivel, sessaoAtual, temSessaoSalva, type Sessao } from '../conta';
-import { MENSAGEM_BLOQUEIO_CONTA } from '../sincronizacaoNucleo';
+import { contaConfere, MENSAGEM_BLOQUEIO_CONTA } from '../sincronizacaoNucleo';
 import { DOIS_SEGREDOS, EntrarNaConta } from './ContaForms';
 import type { Dados } from '../domain/types';
 import { data } from '../formato';
@@ -107,7 +107,14 @@ export default function CartaoSincronizacao({ s, dados }: { s: Sincronizacao; da
             Estado: <b>{rotuloSync(sync.status)}</b>
             {sync.ultimaSync && <span className="mut"> · última sincronização em {quando(sync.ultimaSync)}</span>}
           </p>
-          {sync.precisaEntrar ? <EntrarNaConta emailInicial={sync.email} rotulo="Entrar de novo" aoEntrar={() => void s.sincronizar()} /> : null}
+          {sync.precisaEntrar && sync.userId ? (
+            <EntrarNaConta
+              emailInicial={sync.email}
+              rotulo="Entrar de novo"
+              conferir={(x) => contaConfere({ userId: sync.userId, email: sync.email }, x)}
+              aoEntrar={() => void s.sincronizar()}
+            />
+          ) : null}
           {sync.origem === 'cofre-antigo' && comConta ? (
             <p className="mut" style={{ fontSize: 13 }}>
               Entrar com conta: {MENSAGEM_BLOQUEIO_CONTA}

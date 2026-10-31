@@ -38,8 +38,8 @@ export class NuvemIndisponivel extends Error {
 
 /** A sessão da conta acabou: é preciso entrar de novo; nada local é tocado. */
 export class SessaoExpirada extends Error {
-  constructor() {
-    super('Entre na conta de novo. Os dados deste aparelho continuam aqui e são enviados depois.');
+  constructor(mensagem = 'Entre na conta de novo. Os dados deste aparelho continuam aqui e são enviados depois.') {
+    super(mensagem);
     this.name = 'SessaoExpirada';
   }
 }

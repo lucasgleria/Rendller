@@ -1,9 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useDados } from './armazenamento';
 import { useCdiOnline } from './cdiOnline';
 import { rotuloSync } from './components/CartaoSincronizacao';
 import { NovaSenhaConta } from './components/ContaForms';
-import { contaDisponivel, recuperacaoNaUrl } from './conta';
+import { confirmarRecuperacao, contaDisponivel, recuperacaoNaUrl, urlSemRecuperacao } from './conta';
 import { montarLinhas } from './domain/carteira';
 import { hojeISO } from './domain/datas';
 import Aportes from './pages/Aportes';
@@ -24,8 +24,19 @@ function paginaInicial(): Pagina {
 export default function App() {
   const { dados, atualizar, atualizarAuto, substituir, erroGravacao, podeGravar, carga, aviso } = useDados();
   const [pagina, setPagina] = useState<Pagina>(paginaInicial);
-  // link de "esqueci a senha" da conta: abre o app com a sessão de recuperação na URL
-  const [recuperando, setRecuperando] = useState(() => contaDisponivel() && recuperacaoNaUrl(location.hash));
+  // link de "esqueci a senha" da conta: /?token_hash=…&type=recovery (ou um link vencido)
+  const [recuperacao] = useState(() => (contaDisponivel() ? recuperacaoNaUrl(location.search, location.hash) : null));
+  const [recuperando, setRecuperando] = useState<'verificando' | 'pronto' | 'erro' | null>(() =>
+    recuperacao ? (recuperacao.tipo === 'token' ? 'verificando' : 'erro') : null,
+  );
+  useEffect(() => {
+    if (!recuperacao) return;
+    const limpar = () => history.replaceState(null, '', urlSemRecuperacao(location.href)); // nada de token no histórico
+    if (recuperacao.tipo === 'erro') return limpar();
+    confirmarRecuperacao(recuperacao.tokenHash)
+      .then(() => (limpar(), setRecuperando('pronto')))
+      .catch(() => (limpar(), setRecuperando('erro')));
+  }, [recuperacao]);
   const hoje = hojeISO();
   const linhas = useMemo(() => montarLinhas(dados.aportes, hoje, dados.parametros), [dados, hoje]);
   const { estadoCdi, atualizarCdi } = useCdiOnline(dados, atualizarAuto, hoje);
@@ -64,7 +75,7 @@ export default function App() {
         </div>
       </header>
       <main>
-        {recuperando ? <NovaSenhaConta aoTerminar={() => setRecuperando(false)} /> : null}
+        {recuperando ? <NovaSenhaConta estado={recuperando} aoTerminar={() => setRecuperando(null)} /> : null}
         {aviso ? <div className="aviso vermelho">{aviso}</div> : null}
         {erroGravacao && <div className="aviso vermelho">Não consegui salvar neste navegador (modo privado ou armazenamento cheio). Exporte um backup em Parâmetros.</div>}
         {pagina === 'Painel' && <Painel linhas={linhas} parametros={dados.parametros} hoje={hoje} ir={ir} estadoCdi={estadoCdi} />}
