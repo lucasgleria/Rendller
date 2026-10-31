@@ -3,9 +3,9 @@ import { CampoCheck, CampoData, CampoNumero, CampoSelect, CampoTexto } from '../
 import { avaliar, resgatarParcial, validarAporte, type BaseResgate } from '../domain/calculo';
 import type { Linha } from '../domain/carteira';
 import { Calendario } from '../domain/datas';
-import { INDEXADORES, LIQUIDEZES, STATUS_MANUAIS, TIPOS, novoAporte } from '../domain/padroes';
+import { CLASSES, INDEXADORES, LIQUIDEZES, STATUS_MANUAIS, novoAporte } from '../domain/padroes';
 import type { Aporte, Dados, Parametros, Status } from '../domain/types';
-import { data, moeda, pct } from '../formato';
+import { data, moeda, pct, rotuloAporte } from '../formato';
 
 interface Props {
   linhas: Linha[];
@@ -91,7 +91,7 @@ export default function Aportes({ linhas, parametros, hoje, atualizar }: Props) 
                 <tr key={l.aporte.id} className="clicavel" onClick={() => setEditando(l.aporte)}>
                   <td>
                     {data(l.aporte.dataAporte)}
-                    <div className="linha2">{l.aporte.produto || l.aporte.tipo}</div>
+                    <div className="linha2">{l.aporte.produto ? `${l.aporte.produto} · ${l.aporte.classe}` : rotuloAporte(l.aporte)}</div>
                     {l.aporte.divisao && (
                       <div className="linha2">
                         {pct(l.aporte.divisao.fracao, 1)} de {moeda(l.aporte.divisao.valorOriginal)} · dividido em {data(l.aporte.divisao.data)}
@@ -297,7 +297,7 @@ function Editor({
             <CampoTexto rotulo="Emissor do título" valor={a.emissor} onChange={(x) => set('emissor', x)} dica="Banco que emitiu o CDB (é o que vale para o FGC)" />
             <CampoTexto rotulo="Conglomerado (FGC)" valor={a.conglomerado} onChange={(x) => set('conglomerado', x)} dica="Vazio = usa o emissor" />
             <CampoTexto rotulo="Produto" valor={a.produto} onChange={(x) => set('produto', x)} />
-            <CampoSelect rotulo="Tipo" valor={a.tipo} opcoes={TIPOS} onChange={(x) => set('tipo', x)} />
+            <CampoSelect rotulo="Classe" valor={a.classe} opcoes={CLASSES} onChange={(x) => set('classe', x)} />
             <CampoSelect rotulo="Status" valor={a.status} opcoes={STATUS_MANUAIS} onChange={(x) => (x === 'Resgatado' ? marcarResgate() : set('status', x))} />
           </div>
         </fieldset>

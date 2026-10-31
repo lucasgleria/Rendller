@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { aliquotaIR, avaliar, percentualIOF, resgatarParcial, type ResgateParcial } from './calculo';
 import { agruparPorInstituicao, montarLinhas, resumir } from './carteira';
+import { APORTES_CARTEIRA_REAL, HOJE_CARTEIRA_REAL, LIQUIDO_HOJE_CARTEIRA_REAL, LIQUIDO_VENCIMENTO_CARTEIRA_REAL } from './carteiraReal.fixture';
 import { inicioConsulta, lerSerieBcb, mesclarCdi, ultimoCdi } from './cdi';
 import { Calendario, feriadosNacionais, somaDias } from './datas';
 import { CALENDARIO_ANBIMA } from './feriadosAnbima';
@@ -106,18 +107,14 @@ describe('casos obrigatórios (CLAUDE.md seção 6)', () => {
 });
 
 describe('carteira de referência (fictícia)', () => {
-  const aportes = [
-    cdb({ dataAporte: '2026-07-15', valor: 1200, pctCdi: 1.02, pctCdiPromo: 1.2, diasPromo: 30, vencimento: '2028-07-14', emissor: 'Banco Exemplo' }),
-    cdb({ dataAporte: '2026-08-26', valor: 800, pctCdi: 1.02, pctCdiPromo: 1.2, diasPromo: 30, vencimento: '2028-07-14', emissor: 'Banco Exemplo' }),
-    cdb({ dataAporte: '2026-09-22', valor: 1500, pctCdi: 1.1, vencimento: '2030-09-23', emissor: 'Banco Exemplo', liquidez: 'No vencimento' }),
-  ];
-  const linhas = montarLinhas(aportes, '2026-10-04', p);
+  const aportes = APORTES_CARTEIRA_REAL.map((x) => cdb(x));
+  const linhas = montarLinhas(aportes, HOJE_CARTEIRA_REAL, p);
   it('bate com a referência no vencimento', () => {
-    expect(linhas.map((l) => +l.vencimento.liquido.toFixed(2))).toEqual([1510.79, 987.52, 2475.27]);
+    expect(linhas.map((l) => +l.vencimento.liquido.toFixed(2))).toEqual(LIQUIDO_VENCIMENTO_CARTEIRA_REAL);
     expect(resumir(linhas, p).liquidoVencimento).toBeCloseTo(4973.58, 2);
   });
   it('bate com a referência hoje', () => {
-    expect(linhas.map((l) => +l.hoje.liquido.toFixed(2))).toEqual([1230.31, 810.11, 1502.38]);
+    expect(linhas.map((l) => +l.hoje.liquido.toFixed(2))).toEqual(LIQUIDO_HOJE_CARTEIRA_REAL);
     expect(linhas[2].alertas).toContain('IOF ativo');
   });
 });

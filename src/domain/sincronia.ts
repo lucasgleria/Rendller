@@ -1,4 +1,4 @@
-import { validarBackup } from './importacao';
+import { migrarDados } from './migracao';
 import { normalizarParametros } from './padroes';
 import type { Dados, Parametros } from './types';
 
@@ -15,12 +15,15 @@ export function paraNuvem(d: Dados): Dados {
     delete parametros.cdiData;
     delete parametros.cdiFonte;
   }
-  return { versao: d.versao, aportes: d.aportes, parametros: parametros as Parametros };
+  return { versao: 2, aportes: d.aportes, parametros: parametros as Parametros };
 }
 
-/** Dados vindos da nuvem aplicados neste aparelho, mantendo o CDI público já baixado aqui. */
+/**
+ * Dados vindos da nuvem aplicados neste aparelho, mantendo o CDI público já baixado aqui.
+ * Aceita o formato v1 do cofre antigo; versão mais nova que a deste app lança erro (nada é aplicado).
+ */
 export function daNuvem(remoto: unknown, local: Dados): Dados {
-  const r = validarBackup(remoto);
+  const r = migrarDados(remoto);
   const lp = local.parametros;
   const publicos: Partial<Parametros> = { cdiDiario: lp.cdiDiario, cdiAtualizadoEm: lp.cdiAtualizadoEm };
   if (r.parametros.cdiAutomatico !== false) Object.assign(publicos, { cdiAnual: lp.cdiAnual, cdiData: lp.cdiData, cdiFonte: lp.cdiFonte });

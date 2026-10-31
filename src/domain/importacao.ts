@@ -1,4 +1,5 @@
 import { deDiaNum, isISODate } from './datas';
+import { migrarDados } from './migracao';
 import { novoAporte } from './padroes';
 import type { Aporte, Dados, ISODate, Liquidez } from './types';
 
@@ -81,6 +82,7 @@ export function importarAportes(linhas: Celula[][]): { aportes: Aporte[]; ignora
     const emissor = texto(get(l, 'emissor'));
     aportes.push(
       novoAporte({
+        classe: 'CDB', // a planilha controle_cdb_google_sheets só tem CDB
         dataAporte: data,
         valor,
         instituicao: plataforma,
@@ -129,10 +131,7 @@ export function lerFeriadosAnbima(linhas: Celula[][]): ISODate[] {
   return [...datas].sort();
 }
 
+/** Backup .json de qualquer versão conhecida, já no formato atual (ver `migrarDados`). */
 export function validarBackup(obj: unknown): Dados {
-  const d = obj as Dados;
-  if (!d || d.versao !== 1 || !Array.isArray(d.aportes) || typeof d.parametros !== 'object') {
-    throw new Error('Arquivo de backup inválido.');
-  }
-  return d;
+  return migrarDados(obj);
 }

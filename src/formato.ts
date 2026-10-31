@@ -1,4 +1,4 @@
-import type { ISODate } from './domain/types';
+import type { Aporte, ISODate } from './domain/types';
 
 const brl = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 const brlCurto = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', notation: 'compact', maximumFractionDigits: 1 });
@@ -33,4 +33,12 @@ export function lerNumero(s: string): number | null {
 export function mostrarNumero(v: number | null | undefined, casas = 2): string {
   if (v == null || !Number.isFinite(v)) return '';
   return v.toLocaleString('pt-BR', { maximumFractionDigits: casas, useGrouping: false });
+}
+
+/** Rótulo curto do aporte: classe + indexador (ex.: "CDB · 103% do CDI", "CDB · Prefixado"). */
+export function rotuloAporte(a: Aporte): string {
+  if (a.indexador === 'PRE') return `${a.classe} · Prefixado`;
+  if (a.indexador === 'IPCA') return `${a.classe} · IPCA+`;
+  const casas = Number.isFinite(a.pctCdi) && Math.round(a.pctCdi * 1000) % 10 ? 1 : 0;
+  return `${a.classe} · ${pct(a.pctCdi, casas)} do CDI`;
 }

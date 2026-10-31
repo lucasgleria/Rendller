@@ -78,7 +78,7 @@ export default function Parametros({ dados, atualizar, substituir, hoje, estadoC
       }));
       setMsg({
         tipo: 'azul',
-        texto: `${aportes.length} aporte(s) importado(s)${ignoradas ? `, ${ignoradas} linha(s) incompleta(s) ignorada(s)` : ''}${cdi != null ? `. CDI da planilha: ${pct(cdi)}` : ''}. Revise conglomerado e tipo em cada aporte.`,
+        texto: `${aportes.length} aporte(s) importado(s)${ignoradas ? `, ${ignoradas} linha(s) incompleta(s) ignorada(s)` : ''}${cdi != null ? `. CDI da planilha: ${pct(cdi)}` : ''}. Revise conglomerado e classe em cada aporte.`,
       });
     } catch (e) {
       setMsg({ tipo: 'vermelho', texto: `Não consegui ler a planilha: ${(e as Error).message}` });
