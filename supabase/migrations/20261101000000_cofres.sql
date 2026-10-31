@@ -18,22 +18,55 @@ alter table public.cofres enable row level security;
 revoke all on table public.cofres from anon, public;
 grant select, insert, update, delete on table public.cofres to authenticated;
 
+drop policy if exists "cofres: dono lê" on public.cofres;
 create policy "cofres: dono lê" on public.cofres
   for select to authenticated
   using ((select auth.uid()) = user_id);
 
+drop policy if exists "cofres: dono cria" on public.cofres;
 create policy "cofres: dono cria" on public.cofres
   for insert to authenticated
   with check ((select auth.uid()) = user_id);
 
+drop policy if exists "cofres: dono altera" on public.cofres;
 create policy "cofres: dono altera" on public.cofres
   for update to authenticated
   using ((select auth.uid()) = user_id)
   with check ((select auth.uid()) = user_id);
 
+drop policy if exists "cofres: dono apaga" on public.cofres;
 create policy "cofres: dono apaga" on public.cofres
   for delete to authenticated
   using ((select auth.uid()) = user_id);
+
+-- Toda alteração avança exatamente uma versão e nunca troca o dono da linha, venha de gravar_cofre ou de um
+-- update direto pela Data API. A função do trigger fica no schema `private`, fora da API.
+create schema if not exists private;
+revoke all on schema private from public, anon, authenticated;
+
+create or replace function private.cofres_versao_sequencial()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+begin
+  if new.user_id is distinct from old.user_id then
+    raise exception 'o dono do cofre não muda' using errcode = '42501';
+  end if;
+  if new.versao is distinct from old.versao + 1 then
+    raise exception 'a versão do cofre avança de 1 em 1 (atual %, nova %)', old.versao, new.versao using errcode = '23514';
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function private.cofres_versao_sequencial() from public, anon, authenticated;
+
+drop trigger if exists cofres_versao_sequencial on public.cofres;
+create trigger cofres_versao_sequencial
+  before update on public.cofres
+  for each row execute function private.cofres_versao_sequencial();
 
 -- Grava o envelope sobre a versão `base` que o aparelho conhece.
 -- base = 0: cria (insert ... on conflict do nothing). base > 0: atualiza só se a versão atual for `base`.

@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { clienteSupabase, definirNovaSenha, entrar, esqueciSenha, type Sessao } from '../conta';
+import { useState } from 'react';
+import { definirNovaSenha, entrar, esqueciSenha, MENSAGEM_LINK_VENCIDO, sair, type Sessao } from '../conta';
 
 /** Frase curta mostrada sempre que a conta aparece: dois segredos diferentes. */
 export const DOIS_SEGREDOS =
@@ -8,7 +8,18 @@ export const DOIS_SEGREDOS =
 const siteAtual = () => `${location.origin}${location.pathname}`;
 
 /** Passo 1: e-mail e senha da conta (a senha não é guardada pelo app). */
-export function EntrarNaConta({ emailInicial = '', aoEntrar, rotulo = 'Entrar' }: { emailInicial?: string; aoEntrar: (s: Sessao) => void; rotulo?: string }) {
+export function EntrarNaConta({
+  emailInicial = '',
+  aoEntrar,
+  rotulo = 'Entrar',
+  conferir,
+}: {
+  emailInicial?: string;
+  aoEntrar: (s: Sessao) => void;
+  rotulo?: string;
+  /** "Entrar de novo": devolve a mensagem de recusa se a conta (e-mail ou usuário) não for a ativada. */
+  conferir?: (s: { userId?: string; email: string }) => string | null;
+}) {
   const [email, setEmail] = useState(emailInicial);
   const [senha, setSenha] = useState('');
   const [ocupado, setOcupado] = useState(false);
@@ -16,10 +27,17 @@ export function EntrarNaConta({ emailInicial = '', aoEntrar, rotulo = 'Entrar' }
 
   const enviar = async () => {
     setAviso(null);
+    const antes = conferir?.({ email });
+    if (antes) return setAviso({ tipo: 'vermelho', texto: antes });
     setOcupado(true);
     try {
       const s = await entrar(email, senha);
       setSenha('');
+      const depois = conferir?.(s);
+      if (depois) {
+        await sair(); // não deixa a sessão da outra conta aberta
+        return setAviso({ tipo: 'vermelho', texto: depois });
+      }
       aoEntrar(s);
     } catch (e) {
       setAviso({ tipo: 'vermelho', texto: (e as Error).message });
@@ -73,16 +91,11 @@ export function EntrarNaConta({ emailInicial = '', aoEntrar, rotulo = 'Entrar' }
 }
 
 /** Aberta pelo link de recuperação: define a nova senha da conta. Não mexe na frase-senha nem nos dados. */
-export function NovaSenhaConta({ aoTerminar }: { aoTerminar: () => void }) {
+export function NovaSenhaConta({ aoTerminar, estado }: { aoTerminar: () => void; estado: 'verificando' | 'pronto' | 'erro' }) {
   const [senha, setSenha] = useState('');
   const [repetida, setRepetida] = useState('');
   const [ocupado, setOcupado] = useState(false);
   const [aviso, setAviso] = useState<{ tipo: 'azul' | 'vermelho'; texto: string } | null>(null);
-
-  // carrega o cliente para ele ler o link de recuperação da URL
-  useEffect(() => {
-    clienteSupabase().catch((e: Error) => setAviso({ tipo: 'vermelho', texto: e.message }));
-  }, []);
 
   const salvar = async () => {
     setOcupado(true);
@@ -99,6 +112,24 @@ export function NovaSenhaConta({ aoTerminar }: { aoTerminar: () => void }) {
       setOcupado(false);
     }
   };
+
+  if (estado !== 'pronto') {
+    return (
+      <div className="card" style={{ marginBottom: 12 }}>
+        <h2>Nova senha da conta</h2>
+        {estado === 'verificando' ? (
+          <p className="mut">Conferindo o link de recuperação…</p>
+        ) : (
+          <>
+            <div className="aviso vermelho">{MENSAGEM_LINK_VENCIDO}</div>
+            <button className="btn" onClick={aoTerminar}>
+              Fechar
+            </button>
+          </>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="card" style={{ marginBottom: 12 }}>

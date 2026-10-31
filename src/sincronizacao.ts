@@ -331,6 +331,7 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, c
       ativo: !!config,
       origem: config?.origem ?? null,
       email: config?.origem === 'conta' ? config.email : '',
+      userId: config?.origem === 'conta' ? config.userId : '',
       cofreAntigoAtivo: !!configAntiga(),
       status,
       erro,

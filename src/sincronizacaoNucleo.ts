@@ -1,5 +1,5 @@
 import { remotoCofreAntigo, type Credenciais } from './cofre';
-import { clienteSupabase, remotoDaConta, type ClienteCofre } from './conta';
+import { clienteSupabase, remotoDaConta, sessaoAtual, type ClienteCofre, type Sessao } from './conta';
 import { daNuvem, impressao, planejarCiclo } from './domain/sincronia';
 import type { Dados } from './domain/types';
 import { NuvemIndisponivel, SessaoExpirada, type Cifra, type Remoto, type RespostaRemota } from './remoto';
@@ -56,11 +56,42 @@ export function bloqueioDaConta(antiga: ConfigSync | null): string | null {
   return antiga ? MENSAGEM_BLOQUEIO_CONTA : null;
 }
 
-/** O cofre onde esta config sincroniza. */
-export async function abrirRemoto(c: ConfigSync): Promise<Remoto & Cifra> {
+/**
+ * A sessão (ou o e-mail digitado, antes de entrar) é da conta ativada neste aparelho? null = confere.
+ * Sem `userId`, compara só o e-mail (sem diferença de maiúsculas e espaços).
+ */
+export function contaConfere(c: { userId: string; email: string }, s: { userId?: string; email: string }): string | null {
+  const diferente = s.userId !== undefined ? s.userId !== c.userId : !!c.email && s.email.trim().toLowerCase() !== c.email.trim().toLowerCase();
+  return diferente ? `Conta diferente da ativada neste aparelho; entre com ${c.email}` : null;
+}
+
+/** Antes de cada leitura, gravação ou remoção, confere a sessão; nada chega ao servidor com a conta errada. */
+function remotoConferido(r: Remoto & Cifra, conferir: () => Promise<void>): Remoto & Cifra {
+  return {
+    ler: async () => (await conferir(), r.ler()),
+    gravar: async (base, e) => (await conferir(), r.gravar(base, e)),
+    apagar: async () => (await conferir(), r.apagar()),
+    cifrar: (d) => r.cifrar(d),
+    decifrar: (e) => r.decifrar(e),
+  };
+}
+
+/** O cofre onde esta config sincroniza. `deps` só existe para os testes. */
+export async function abrirRemoto(
+  c: ConfigSync,
+  deps: { sessao: () => Promise<Sessao | null>; cliente: () => Promise<ClienteCofre> } = {
+    sessao: sessaoAtual,
+    cliente: async () => (await clienteSupabase()) as unknown as ClienteCofre,
+  },
+): Promise<Remoto & Cifra> {
   if (c.origem === 'cofre-antigo') return remotoCofreAntigo(c.cred);
-  const cliente = (await clienteSupabase()) as unknown as ClienteCofre;
-  return remotoDaConta(cliente, { id: c.userId, chave: c.chave });
+  const remoto = remotoDaConta(await deps.cliente(), { id: c.userId, chave: c.chave });
+  return remotoConferido(remoto, async () => {
+    const s = await deps.sessao(); // sem rede: TypeError ("sem conexão"), não "entre de novo"
+    if (!s) throw new SessaoExpirada();
+    const diferente = contaConfere(c, s);
+    if (diferente) throw new SessaoExpirada(diferente);
+  });
 }
 
 export type Preparacao = { tipo: 'novo' } | { tipo: 'existente'; remoto: Dados; versao: number; atualizadoEm?: string };
