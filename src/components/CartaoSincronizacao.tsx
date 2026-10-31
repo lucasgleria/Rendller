@@ -1,5 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { TAMANHO_MINIMO_FRASE } from '../cofre';
+import { contaDisponivel, sessaoAtual, temSessaoSalva, type Sessao } from '../conta';
+import { MENSAGEM_BLOQUEIO_CONTA } from '../sincronizacaoNucleo';
+import { DOIS_SEGREDOS, EntrarNaConta } from './ContaForms';
 import type { Dados } from '../domain/types';
 import { data } from '../formato';
 import type { Preparacao, Sincronizacao, StatusSync } from '../sincronizacao';
@@ -33,18 +36,37 @@ export default function CartaoSincronizacao({ s, dados }: { s: Sincronizacao; da
   const [prep, setPrep] = useState<Preparacao | null>(null);
   const [ocupado, setOcupado] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
+  const [fraseConta, setFraseConta] = useState('');
+  const [sessao, setSessao] = useState<Sessao | null>(null);
+  const comConta = contaDisponivel();
+
+  // sessão da conta já salva neste navegador: pula o passo do e-mail e senha (só carrega o Supabase se houver)
+  useEffect(() => {
+    if (!comConta || sync.ativo || !temSessaoSalva()) return;
+    let vivo = true;
+    sessaoAtual()
+      .then((x) => vivo && setSessao(x))
+      .catch(() => undefined);
+    return () => {
+      vivo = false;
+    };
+  }, [comConta, sync.ativo]);
 
   const limpar = () => {
     setFrase('');
+    setFraseConta('');
     setConfirmacao('');
     setPrep(null);
   };
 
-  const continuar = async () => {
+  // a frase digitada para o destino em preparação (cofre antigo ou conta)
+  const fraseDoPrep = prep?.destino.origem === 'conta' ? fraseConta : frase;
+
+  const continuar = async (origem: 'cofre-antigo' | 'conta') => {
     setAviso(null);
     setOcupado(true);
     try {
-      const p = await s.preparar(frase);
+      const p = origem === 'conta' ? await s.prepararConta(fraseConta) : await s.preparar(frase);
       // nuvem vazia de verdade ou nada local a perder: segue direto
       if (p.tipo === 'existente' && dados.aportes.length === 0) {
         if (await s.concluir(p, 'nuvem')) limpar();
@@ -77,9 +99,20 @@ export default function CartaoSincronizacao({ s, dados }: { s: Sincronizacao; da
       {sync.ativo ? (
         <>
           <p style={{ margin: '4px 0 10px' }}>
+            {sync.origem === 'conta' ? (
+              <>
+                Conta: <b>{sync.email || 'conectada'}</b> ·{' '}
+              </>
+            ) : null}
             Estado: <b>{rotuloSync(sync.status)}</b>
             {sync.ultimaSync && <span className="mut"> · última sincronização em {quando(sync.ultimaSync)}</span>}
           </p>
+          {sync.precisaEntrar ? <EntrarNaConta emailInicial={sync.email} rotulo="Entrar de novo" aoEntrar={() => void s.sincronizar()} /> : null}
+          {sync.origem === 'cofre-antigo' && comConta ? (
+            <p className="mut" style={{ fontSize: 13 }}>
+              Entrar com conta: {MENSAGEM_BLOQUEIO_CONTA}
+            </p>
+          ) : null}
           {sync.conflito && (
             <div className="aviso amarelo">
               Este aparelho e a nuvem foram alterados ao mesmo tempo. Nuvem: {aportes(sync.conflito.remoto.aportes.length)}
@@ -101,9 +134,15 @@ export default function CartaoSincronizacao({ s, dados }: { s: Sincronizacao; da
             <button className="btn" disabled={sync.status === 'sincronizando'} onClick={() => void s.sincronizar()}>
               Sincronizar agora
             </button>
-            <button className="btn" onClick={() => confirm('Parar de sincronizar neste aparelho? Os dados continuam aqui e na nuvem.') && s.desativar()}>
-              Desativar neste aparelho
-            </button>
+            {sync.origem === 'conta' ? (
+              <button className="btn" onClick={() => confirm('Sair da conta neste aparelho? Os dados continuam aqui e na nuvem.') && void s.sairDaConta()}>
+                Sair da conta neste aparelho
+              </button>
+            ) : (
+              <button className="btn" onClick={() => confirm('Parar de sincronizar neste aparelho? Os dados continuam aqui e na nuvem.') && s.desativar()}>
+                Desativar neste aparelho
+              </button>
+            )}
             <button
               className="btn perigo"
               onClick={() =>
@@ -119,7 +158,9 @@ export default function CartaoSincronizacao({ s, dados }: { s: Sincronizacao; da
         prep.tipo === 'novo' ? (
           <>
             <div className="aviso amarelo">
-              Não existe nada na nuvem com essa frase-senha. Se você já ativou em outro aparelho, a frase digitada está diferente: volte e confira.
+              {prep.destino.origem === 'conta'
+                ? 'Esta conta ainda não tem dados na nuvem. A frase-senha digitada agora vai cifrar a carteira: guarde-a, ela não tem recuperação.'
+                : 'Não existe nada na nuvem com essa frase-senha. Se você já ativou em outro aparelho, a frase digitada está diferente: volte e confira.'}
             </div>
             <p>Para criar um cofre novo com os dados deste aparelho ({aportes(dados.aportes.length)}), digite a frase de novo:</p>
             <div className="campos">
@@ -129,13 +170,13 @@ export default function CartaoSincronizacao({ s, dados }: { s: Sincronizacao; da
               </label>
             </div>
             <div className="acoes" style={{ marginTop: 8 }}>
-              <button className="btn primario" disabled={ocupado || confirmacao !== frase} onClick={() => void concluir('local')}>
+              <button className="btn primario" disabled={ocupado || confirmacao !== fraseDoPrep} onClick={() => void concluir('local')}>
                 Criar cofre e enviar
               </button>
               <button className="btn" onClick={limpar}>
                 Voltar
               </button>
-              {confirmacao && confirmacao !== frase && <span className="mut" style={{ alignSelf: 'center', fontSize: 13 }}>As frases não coincidem.</span>}
+              {confirmacao && confirmacao !== fraseDoPrep && <span className="mut" style={{ alignSelf: 'center', fontSize: 13 }}>As frases não coincidem.</span>}
             </div>
           </>
         ) : (
@@ -163,6 +204,41 @@ export default function CartaoSincronizacao({ s, dados }: { s: Sincronizacao; da
         )
       ) : (
         <>
+          {comConta ? (
+            <div style={{ marginBottom: 16 }}>
+              <h3 style={{ margin: '4px 0' }}>Entrar com conta</h3>
+              <p className="mut" style={{ fontSize: 13, marginTop: 0 }}>
+                {DOIS_SEGREDOS}
+              </p>
+              {sessao ? (
+                <>
+                  <p style={{ margin: '4px 0 8px' }}>
+                    Conta: <b>{sessao.email}</b>. Agora a frase-senha que cifra a carteira:
+                  </p>
+                  <div className="campos">
+                    <label className="campo largo">
+                      <span>Frase-senha (mínimo {TAMANHO_MINIMO_FRASE} caracteres; prefira 4 ou mais palavras)</span>
+                      <input
+                        type="password"
+                        autoComplete="off"
+                        value={fraseConta}
+                        onChange={(e) => setFraseConta(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && fraseConta.trim().length >= TAMANHO_MINIMO_FRASE && void continuar('conta')}
+                      />
+                    </label>
+                  </div>
+                  <div className="acoes" style={{ marginTop: 8 }}>
+                    <button className="btn primario" disabled={ocupado || fraseConta.trim().length < TAMANHO_MINIMO_FRASE} onClick={() => void continuar('conta')}>
+                      {ocupado ? 'Protegendo a chave…' : 'Sincronizar com a conta'}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <EntrarNaConta aoEntrar={setSessao} />
+              )}
+              <h3 style={{ margin: '16px 0 4px' }}>Ou só com frase-senha (cofre antigo)</h3>
+            </div>
+          ) : null}
           <div className="campos">
             <label className="campo largo">
               <span>Frase-senha (mínimo {TAMANHO_MINIMO_FRASE} caracteres; prefira 4 ou mais palavras)</span>
@@ -171,12 +247,12 @@ export default function CartaoSincronizacao({ s, dados }: { s: Sincronizacao; da
                 autoComplete="current-password"
                 value={frase}
                 onChange={(e) => setFrase(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && frase.trim().length >= TAMANHO_MINIMO_FRASE && void continuar()}
+                onKeyDown={(e) => e.key === 'Enter' && frase.trim().length >= TAMANHO_MINIMO_FRASE && void continuar('cofre-antigo')}
               />
             </label>
           </div>
           <div className="acoes" style={{ marginTop: 8 }}>
-            <button className="btn primario" disabled={ocupado || frase.trim().length < TAMANHO_MINIMO_FRASE} onClick={() => void continuar()}>
+            <button className="btn primario" disabled={ocupado || frase.trim().length < TAMANHO_MINIMO_FRASE} onClick={() => void continuar('cofre-antigo')}>
               {ocupado ? 'Protegendo a chave…' : 'Ativar sincronização'}
             </button>
           </div>

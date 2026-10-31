@@ -1,0 +1,130 @@
+import { useEffect, useState } from 'react';
+import { clienteSupabase, definirNovaSenha, entrar, esqueciSenha, type Sessao } from '../conta';
+
+/** Frase curta mostrada sempre que a conta aparece: dois segredos diferentes. */
+export const DOIS_SEGREDOS =
+  'A senha da conta só serve para entrar e pode ser recuperada por e-mail; a frase-senha cifra os dados, nunca sai deste aparelho e não tem recuperação.';
+
+const siteAtual = () => `${location.origin}${location.pathname}`;
+
+/** Passo 1: e-mail e senha da conta (a senha não é guardada pelo app). */
+export function EntrarNaConta({ emailInicial = '', aoEntrar, rotulo = 'Entrar' }: { emailInicial?: string; aoEntrar: (s: Sessao) => void; rotulo?: string }) {
+  const [email, setEmail] = useState(emailInicial);
+  const [senha, setSenha] = useState('');
+  const [ocupado, setOcupado] = useState(false);
+  const [aviso, setAviso] = useState<{ tipo: 'azul' | 'vermelho'; texto: string } | null>(null);
+
+  const enviar = async () => {
+    setAviso(null);
+    setOcupado(true);
+    try {
+      const s = await entrar(email, senha);
+      setSenha('');
+      aoEntrar(s);
+    } catch (e) {
+      setAviso({ tipo: 'vermelho', texto: (e as Error).message });
+    } finally {
+      setOcupado(false);
+    }
+  };
+
+  const esqueci = async () => {
+    if (!email.trim()) return setAviso({ tipo: 'vermelho', texto: 'Digite o e-mail da conta para receber o link.' });
+    setOcupado(true);
+    try {
+      await esqueciSenha(email, siteAtual());
+      setAviso({ tipo: 'azul', texto: 'Se o e-mail for de uma conta, chega um link para criar uma nova senha. Abra o link neste navegador ou em outro.' });
+    } catch (e) {
+      setAviso({ tipo: 'vermelho', texto: (e as Error).message });
+    } finally {
+      setOcupado(false);
+    }
+  };
+
+  return (
+    <>
+      {aviso && <div className={`aviso ${aviso.tipo}`}>{aviso.texto}</div>}
+      <div className="campos">
+        <label className="campo">
+          <span>E-mail da conta</span>
+          <input type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} />
+        </label>
+        <label className="campo">
+          <span>Senha da conta</span>
+          <input
+            type="password"
+            autoComplete="current-password"
+            value={senha}
+            onChange={(e) => setSenha(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && email && senha && void enviar()}
+          />
+        </label>
+      </div>
+      <div className="acoes" style={{ marginTop: 8 }}>
+        <button className="btn primario" disabled={ocupado || !email.trim() || !senha} onClick={() => void enviar()}>
+          {ocupado ? 'Entrando…' : rotulo}
+        </button>
+        <button className="btn" disabled={ocupado} onClick={() => void esqueci()}>
+          Esqueci a senha da conta
+        </button>
+      </div>
+    </>
+  );
+}
+
+/** Aberta pelo link de recuperação: define a nova senha da conta. Não mexe na frase-senha nem nos dados. */
+export function NovaSenhaConta({ aoTerminar }: { aoTerminar: () => void }) {
+  const [senha, setSenha] = useState('');
+  const [repetida, setRepetida] = useState('');
+  const [ocupado, setOcupado] = useState(false);
+  const [aviso, setAviso] = useState<{ tipo: 'azul' | 'vermelho'; texto: string } | null>(null);
+
+  // carrega o cliente para ele ler o link de recuperação da URL
+  useEffect(() => {
+    clienteSupabase().catch((e: Error) => setAviso({ tipo: 'vermelho', texto: e.message }));
+  }, []);
+
+  const salvar = async () => {
+    setOcupado(true);
+    setAviso(null);
+    try {
+      await definirNovaSenha(senha);
+      setSenha('');
+      setRepetida('');
+      setAviso({ tipo: 'azul', texto: 'Senha da conta alterada.' });
+      setTimeout(aoTerminar, 1500);
+    } catch (e) {
+      setAviso({ tipo: 'vermelho', texto: (e as Error).message });
+    } finally {
+      setOcupado(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ marginBottom: 12 }}>
+      <h2>Nova senha da conta</h2>
+      <p className="mut" style={{ fontSize: 13, marginTop: 0 }}>
+        {DOIS_SEGREDOS}
+      </p>
+      {aviso && <div className={`aviso ${aviso.tipo}`}>{aviso.texto}</div>}
+      <div className="campos">
+        <label className="campo">
+          <span>Nova senha da conta</span>
+          <input type="password" autoComplete="new-password" value={senha} onChange={(e) => setSenha(e.target.value)} />
+        </label>
+        <label className="campo">
+          <span>Repita a nova senha</span>
+          <input type="password" autoComplete="new-password" value={repetida} onChange={(e) => setRepetida(e.target.value)} />
+        </label>
+      </div>
+      <div className="acoes" style={{ marginTop: 8 }}>
+        <button className="btn primario" disabled={ocupado || senha.length < 8 || senha !== repetida} onClick={() => void salvar()}>
+          Salvar nova senha
+        </button>
+        <button className="btn" onClick={aoTerminar}>
+          Agora não
+        </button>
+      </div>
+    </div>
+  );
+}

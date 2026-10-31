@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react';
 import { useDados } from './armazenamento';
 import { useCdiOnline } from './cdiOnline';
 import { rotuloSync } from './components/CartaoSincronizacao';
+import { NovaSenhaConta } from './components/ContaForms';
+import { contaDisponivel, recuperacaoNaUrl } from './conta';
 import { montarLinhas } from './domain/carteira';
 import { hojeISO } from './domain/datas';
 import Aportes from './pages/Aportes';
@@ -22,6 +24,8 @@ function paginaInicial(): Pagina {
 export default function App() {
   const { dados, atualizar, atualizarAuto, substituir, erroGravacao, podeGravar, carga, aviso } = useDados();
   const [pagina, setPagina] = useState<Pagina>(paginaInicial);
+  // link de "esqueci a senha" da conta: abre o app com a sessão de recuperação na URL
+  const [recuperando, setRecuperando] = useState(() => contaDisponivel() && recuperacaoNaUrl(location.hash));
   const hoje = hojeISO();
   const linhas = useMemo(() => montarLinhas(dados.aportes, hoje, dados.parametros), [dados, hoje]);
   const { estadoCdi, atualizarCdi } = useCdiOnline(dados, atualizarAuto, hoje);
@@ -60,6 +64,7 @@ export default function App() {
         </div>
       </header>
       <main>
+        {recuperando ? <NovaSenhaConta aoTerminar={() => setRecuperando(false)} /> : null}
         {aviso ? <div className="aviso vermelho">{aviso}</div> : null}
         {erroGravacao && <div className="aviso vermelho">Não consegui salvar neste navegador (modo privado ou armazenamento cheio). Exporte um backup em Parâmetros.</div>}
         {pagina === 'Painel' && <Painel linhas={linhas} parametros={dados.parametros} hoje={hoje} ir={ir} estadoCdi={estadoCdi} />}
