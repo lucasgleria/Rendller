@@ -38,8 +38,9 @@ Antes de dizer que uma mudança está pronta, rode `npm test` e `npm run build`.
 | `src/servicos.ts` | Rede: API do Banco Central (CDI) e proxy `/anbima/*` (calendário) |
 | `src/cdiOnline.ts` | Hook que atualiza o CDI ao abrir o app (uma vez por dia) e sob demanda |
 | `src/domain/sincronia.ts` | O que sincroniza (`paraNuvem`), aplicação dos dados remotos (`daNuvem`), impressão digital |
-| `src/cofre.ts` | Criptografia da sincronização (PBKDF2 → HKDF → id, token, chave AES-GCM) e chamadas a `/api/cofre` |
-| `src/sincronizacao.ts` | Hook de sincronização: envio, busca, conflitos, ativação |
+| `src/cofre.ts` | Criptografia da sincronização (PBKDF2 → HKDF → id, token, chave AES-GCM), chamadas a `/api/cofre` e o cofre antigo como `Remoto` (`remotoCofreAntigo`) |
+| `src/remoto.ts`, `src/remoto.contrato.ts` | Interfaces `Remoto` e `Cifra` do cofre de sincronização; contrato de teste compartilhado (só testes importam) |
+| `src/sincronizacao.ts` | Hook de sincronização (só efeitos: fila, estado, timers) sobre `Remoto & Cifra`; decisões puras em `domain/sincronia.ts` (`planejarCiclo`, `decidirCiclo`) |
 | `netlify/cofre.ts`, `netlify/functions/cofre.mts` | Servidor do cofre (Netlify Function + Netlify Blobs); guarda só conteúdo cifrado |
 | `netlify.toml` | Build, proxy da ANBIMA e cabeçalhos do deploy no Netlify |
 | `src/pages/*.tsx` | Telas: Painel, Aportes, Instituições, Simulador, Parâmetros |

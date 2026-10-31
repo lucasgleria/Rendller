@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { apagarCofre, cifrar, decifrar, derivarCredenciais, gravarCofre, lerCofre, type Credenciais } from './cofre';
 import type { Carga } from './armazenamento';
-import { ajustarImpressaoAposNormalizacao, daNuvem, decidirCiclo, impressao, paraNuvem } from './domain/sincronia';
+import { derivarCredenciais, remotoCofreAntigo, type Credenciais } from './cofre';
+import { aguardandoDepois, ajustarImpressaoAposNormalizacao, daNuvem, impressao, paraNuvem, planejarCiclo } from './domain/sincronia';
 import type { Dados } from './domain/types';
+import type { Cifra, Remoto } from './remoto';
 
 const CHAVE_CONFIG = 'rendller:sync:v1';
 /** Cópia dos dados locais antes de serem trocados pelos da nuvem (para não perder nada num engano). */
@@ -10,7 +11,9 @@ export const CHAVE_COPIA = 'rendller:copia-antes-da-nuvem';
 const ESPERA_ENVIO_MS = 1500;
 const INTERVALO_MS = 120_000;
 
-interface ConfigSync {
+export interface ConfigSync {
+  /** Onde fica o cofre. Config gravada antes deste campo é do cofre antigo. */
+  origem: 'cofre-antigo';
   cred: Credenciais;
   versao: number; // última versão do cofre que este aparelho conhece
   impressao: string; // impressão dos dados nessa versão (diferente da atual = há alteração a enviar)
@@ -29,13 +32,29 @@ export type Preparacao =
   | { tipo: 'novo'; cred: Credenciais }
   | { tipo: 'existente'; cred: Credenciais; remoto: Dados; versao: number; atualizadoEm?: string };
 
-function lerConfig(): ConfigSync | null {
+/** Lê a config salva em `rendller:sync:v1`; a gravada sem `origem` é do cofre antigo. Origem desconhecida não liga nada. */
+export function lerConfigSalva(bruto: string | null): ConfigSync | null {
   try {
-    const c = JSON.parse(localStorage.getItem(CHAVE_CONFIG) ?? 'null');
-    return c?.cred?.id ? c : null;
+    const c = JSON.parse(bruto ?? 'null');
+    if (!c?.cred?.id) return null;
+    if (c.origem !== undefined && c.origem !== 'cofre-antigo') return null;
+    return { ...c, origem: 'cofre-antigo' };
   } catch {
     return null;
   }
+}
+
+function lerConfig(): ConfigSync | null {
+  try {
+    return lerConfigSalva(localStorage.getItem(CHAVE_CONFIG));
+  } catch {
+    return null;
+  }
+}
+
+/** O cofre onde esta config sincroniza. */
+export function abrirRemoto(c: ConfigSync): Remoto & Cifra {
+  return remotoCofreAntigo(c.cred);
 }
 
 /** Config salva; depois da migração e da normalização a impressão passa a assinar os dados normalizados (sem falso "pendente"). */
@@ -120,7 +139,7 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, c
 
   const aplicarRemoto = useCallback(
     (c: ConfigSync, remoto: Dados, versao: number) => {
-      aguardandoCofre.current = false;
+      aguardandoCofre.current = aguardandoDepois(aguardandoCofre.current, 'aplicou');
       if (impressao(remoto) !== impressao(dadosRef.current)) {
         guardarCopia(dadosRef.current);
         substituir(remoto);
@@ -137,10 +156,12 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, c
       const d = dadosRef.current;
       if (d.versao !== 2) throw new Error('Dados locais num formato inesperado; nada foi enviado.');
       // a nuvem sempre recebe versao 2 (a impressão de dados legados continua usando a versão do objeto)
-      const r = await gravarCofre(c.cred, base, await cifrar(c.cred, { ...paraNuvem(d), versao: 2 }));
+      const remoto = abrirRemoto(c);
+      const r = await remoto.gravar(base, await remoto.cifrar({ ...paraNuvem(d), versao: 2 }));
       if (r.tipo === 'conflito') return false;
       if (r.tipo !== 'ok') throw new Error('O servidor recusou a gravação.');
-      aguardandoCofre.current = false; // envio só por decisão do usuário quando os dados eram ilegíveis
+      // envio só acontece por decisão do usuário quando os dados eram ilegíveis
+      aguardandoCofre.current = aguardandoDepois(aguardandoCofre.current, 'enviou');
       salvarConfig({ ...c, versao: r.versao, impressao: impressao(d), ultimaSync: new Date().toISOString() });
       return true;
     },
@@ -152,25 +173,24 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, c
       const c = configRef.current;
       if (!c) return;
       setStatus('sincronizando');
-      const r = await lerCofre(c.cred);
+      const cofre = abrirRemoto(c);
+      const r = await cofre.ler();
       if (r.tipo === 'negado') throw new Error('A nuvem recusou o acesso deste aparelho. Desative e ative a sincronização de novo.');
       if (r.tipo === 'inexistente') throw new Error('Os dados não existem mais na nuvem (foram apagados em outro aparelho?). Desative e ative de novo para recriar.');
       if (r.tipo !== 'ok') return;
       const local = dadosRef.current;
-      const ilegivel = aguardandoCofre.current;
-      const precisaRemoto = ilegivel || r.versao !== c.versao;
-      const remoto = precisaRemoto && r.envelope ? daNuvem(await decifrar(c.cred, r.envelope), local) : null;
-      const decisao =
-        precisaRemoto && !remoto
-          ? 'nada'
-          : decidirCiclo({
-              versaoLocal: c.versao,
-              versaoRemota: r.versao,
-              pendente: impressao(local) !== c.impressao,
-              ilegivel,
-              editadoDesdeIlegivel: podeGravarRef.current,
-              remotoIgualLocal: remoto ? impressao(remoto) === impressao(local) : undefined,
-            });
+      const entrada = {
+        versaoLocal: c.versao,
+        versaoRemota: r.versao,
+        temEnvelope: !!r.envelope,
+        impressaoConfig: c.impressao,
+        impressaoLocal: impressao(local),
+        impressaoRemota: null as string | null,
+        aguardandoCofre: aguardandoCofre.current,
+        podeGravar: podeGravarRef.current,
+      };
+      const remoto = planejarCiclo(entrada).precisaRemoto && r.envelope ? daNuvem(await cofre.decifrar(r.envelope), local) : null;
+      const { decisao } = planejarCiclo({ ...entrada, impressaoRemota: remoto ? impressao(remoto) : null });
       if (decisao === 'aplicar' && remoto) aplicarRemoto(c, remoto, r.versao);
       else if (decisao === 'conflito' && remoto) {
         setConflito({ remoto, versao: r.versao, atualizadoEm: r.atualizadoEm });
@@ -218,10 +238,11 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, c
   /** Primeiro passo da ativação: deriva as credenciais e vê se já existe cofre para esta frase. */
   const preparar = useCallback(async (frase: string): Promise<Preparacao> => {
     const cred = await derivarCredenciais(frase);
-    const r = await lerCofre(cred);
+    const cofre = abrirRemoto({ origem: 'cofre-antigo', cred, versao: 0, impressao: '', ultimaSync: '' });
+    const r = await cofre.ler();
     if (r.tipo === 'inexistente') return { tipo: 'novo', cred };
     if (r.tipo !== 'ok' || !r.envelope) throw new Error('A nuvem recusou o acesso.');
-    const remoto = daNuvem(await decifrar(cred, r.envelope), dadosRef.current);
+    const remoto = daNuvem(await cofre.decifrar(r.envelope), dadosRef.current);
     return { tipo: 'existente', cred, remoto, versao: r.versao, atualizadoEm: r.atualizadoEm };
   }, []);
 
@@ -232,7 +253,7 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, c
         setConflito(null);
         setStatus('sincronizando');
         try {
-          const c: ConfigSync = { cred: prep.cred, versao: prep.tipo === 'existente' ? prep.versao : 0, impressao: '', ultimaSync: '' };
+          const c: ConfigSync = { origem: 'cofre-antigo', cred: prep.cred, versao: prep.tipo === 'existente' ? prep.versao : 0, impressao: '', ultimaSync: '' };
           if (prep.tipo === 'existente' && escolha === 'nuvem') aplicarRemoto(c, prep.remoto, prep.versao);
           else if (!(await enviar(c, c.versao))) throw new Error('Outro aparelho gravou neste instante. Tente ativar de novo.');
           setErro(null);
@@ -285,7 +306,7 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, c
         const c = configRef.current;
         if (!c) return;
         try {
-          await apagarCofre(c.cred);
+          await abrirRemoto(c).apagar();
           desativar();
         } catch (e) {
           falhou(e);
