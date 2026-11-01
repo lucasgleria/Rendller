@@ -85,20 +85,45 @@ export function depoisDeDesativar(
   return { proxima: lerContaSalva(s.getItem(CHAVE_CONTA)), pausarCofreAntigo: false, aviso: null };
 }
 
-/** `rendller:sync:v1` nunca é regravado depois do arquivamento (uma aba antiga não desarquiva o cofre). */
+/**
+ * `rendller:sync:v1` só é gravado enquanto o cofre antigo é a sincronização deste aparelho: nunca depois do
+ * arquivamento, com a migração pausada ou com a conta ativa (uma aba antiga não o desarquiva nem o religa).
+ */
 export function podeGravarCofreAntigo(s: Pick<Storage, 'getItem'>): boolean {
-  return s.getItem(CHAVE_SYNC_MIGRADO) == null;
+  return s.getItem(CHAVE_SYNC_MIGRADO) == null && s.getItem(CHAVE_SYNC_PENDENTE) == null && s.getItem(CHAVE_CONTA) == null;
 }
 
 /**
- * Config que esta aba deve usar, relida do `localStorage`: se outra aba migrou (sync:v1 sumiu e há :migrado),
- * o cofre antigo é desligado aqui e vale a conta, se houver.
+ * Config que esta aba deve usar, relida do `localStorage`. Com a conta ativa (mesmo com a migração incompleta),
+ * o cofre antigo dá lugar a ela; com a migração pausada ou o cofre arquivado, nada sincroniza pelo cofre antigo.
+ * `sync:v1` nunca é apagado nem alterado aqui: a aba só deixa de usá-lo.
  */
 export function configDaAba(c: ConfigSync | null, s: Pick<Storage, 'getItem'>): ConfigSync | null {
-  if (c?.origem === 'cofre-antigo' && s.getItem(CHAVE_SYNC_V1) == null && s.getItem(CHAVE_SYNC_MIGRADO) != null) {
-    return lerContaSalva(s.getItem(CHAVE_CONTA));
-  }
+  if (c?.origem !== 'cofre-antigo') return c;
+  const conta = lerContaSalva(s.getItem(CHAVE_CONTA));
+  if (conta) return conta;
+  if (s.getItem(CHAVE_SYNC_PENDENTE) != null) return null;
+  if (s.getItem(CHAVE_SYNC_V1) == null && s.getItem(CHAVE_SYNC_MIGRADO) != null) return null;
   return c;
+}
+
+/** Mesma sincronização (mesma origem e mesma identidade)? */
+const mesmaIdentidade = (a: ConfigSync, b: ConfigSync) =>
+  a.origem === b.origem && (a.origem === 'conta' ? a.userId === (b as ConfigConta).userId : a.cred.id === (b as Extract<ConfigSync, { origem: 'cofre-antigo' }>).cred.id);
+
+/**
+ * Ao adotar uma config vinda de outra aba, esta aba recarrega os dados salvos (que a outra aba sincronizou) antes
+ * do próximo ciclo, para não enviar a versão antiga que tem na memória por cima. Se a memória diferir do salvo,
+ * a versão da memória é guardada como cópia antes de ser trocada.
+ */
+export function adocaoDeConfig(
+  anterior: ConfigSync | null,
+  nova: ConfigSync | null,
+  memoria: Dados,
+  salvo: Dados,
+): { adotar: boolean; dados: Dados; guardarCopia: boolean } {
+  if (!nova || (anterior && mesmaIdentidade(anterior, nova))) return { adotar: false, dados: memoria, guardarCopia: false };
+  return { adotar: true, dados: salvo, guardarCopia: impressao(memoria) !== impressao(salvo) };
 }
 
 export interface DepsMigracao {
