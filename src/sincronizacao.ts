@@ -7,9 +7,12 @@ import type { Candidato } from './domain/migracao';
 import {
   armazenamentoMigracao,
   concluirEscolha,
-  lerCofreAntigoCom,
+  configDaAba,
+  criarDepsMigracao,
   migrarParaConta,
-  nomeBackup,
+  podeGravarCofreAntigo,
+  recusaCofreAntigo,
+  type ConfigConta,
   type DepsMigracao,
   type ResultadoMigracao,
 } from './migracaoConta';
@@ -18,6 +21,8 @@ import type { Dados } from './domain/types';
 import { SessaoExpirada } from './remoto';
 import {
   abrirRemoto,
+  CHAVE_CONFIG_ANTIGA,
+  CHAVE_CONTA,
   cicloRemoto,
   classificarFalha,
   escolherConfig,
@@ -30,8 +35,7 @@ import {
 
 export type { ConfigSync } from './sincronizacaoNucleo';
 
-const CHAVE_CONFIG = 'rendller:sync:v1'; // cofre antigo
-const CHAVE_CONTA = 'rendller:conta:v1'; // cofre da conta
+const CHAVE_CONFIG = CHAVE_CONFIG_ANTIGA; // cofre antigo
 /** Cópia dos dados locais antes de serem trocados pelos da nuvem (para não perder nada num engano). */
 export const CHAVE_COPIA = 'rendller:copia-antes-da-nuvem';
 const ESPERA_ENVIO_MS = 1500;
@@ -74,6 +78,8 @@ function configInicial(dados: Dados, carga: Pick<Carga, 'origem' | 'bruto'>): Co
 function gravarConfig(c: ConfigSync | null, origem: ConfigSync['origem'] = c?.origem ?? 'cofre-antigo') {
   const chave = origem === 'conta' ? CHAVE_CONTA : CHAVE_CONFIG;
   try {
+    // aparelho que migrou: nenhuma aba regrava a config do cofre antigo
+    if (c && origem === 'cofre-antigo' && !podeGravarCofreAntigo(localStorage)) return;
     if (c) localStorage.setItem(chave, JSON.stringify(c));
     else localStorage.removeItem(chave);
   } catch {
@@ -120,10 +126,31 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, c
   conflitoRef.current = conflito;
 
   const salvarConfig = useCallback((c: ConfigSync | null, origem?: ConfigSync['origem']) => {
-    configRef.current = c;
-    gravarConfig(c, origem);
-    setConfigEstado(c);
+    // uma aba antiga não desarquiva o cofre antigo: relê o localStorage antes de gravar
+    const valida = c ? configDaAba(c, localStorage) : c;
+    configRef.current = valida;
+    gravarConfig(valida, origem ?? c?.origem);
+    setConfigEstado(valida);
   }, []);
+
+  /** Relê a config do `localStorage` (outra aba pode ter migrado). Devolve false se não há o que sincronizar. */
+  const revalidar = useCallback((): boolean => {
+    const atual = configDaAba(configRef.current, localStorage);
+    if (atual !== configRef.current) {
+      configRef.current = atual;
+      setConfigEstado(atual);
+      if (!atual) setStatus('desligado');
+    }
+    return !!atual;
+  }, []);
+
+  useEffect(() => {
+    const aoMudar = (e: StorageEvent) => {
+      if (e.key === null || e.key === CHAVE_CONFIG || e.key === CHAVE_CONTA || e.key?.startsWith(CHAVE_CONFIG)) revalidar();
+    };
+    window.addEventListener('storage', aoMudar);
+    return () => window.removeEventListener('storage', aoMudar);
+  }, [revalidar]);
 
   /** Operações em fila: nunca duas conversas com o servidor ao mesmo tempo. */
   const enfileirar = useCallback(<T,>(f: () => Promise<T>): Promise<T> => {
@@ -176,6 +203,7 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, c
 
   const ciclo = useCallback(
     async (tentativa = 0): Promise<void> => {
+      if (!revalidar()) return;
       const c = configRef.current;
       if (!c) return;
       setStatus('sincronizando');
@@ -197,11 +225,14 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, c
       setPrecisaEntrar(false);
       setStatus(impressao(dadosRef.current) !== configRef.current?.impressao ? 'pendente' : 'sincronizado');
     },
-    [aplicarRemoto, enviar],
+    [aplicarRemoto, enviar, revalidar],
   );
 
+  /** Dependências da migração em andamento; com escolha pendente, o ciclo fica pausado. */
+  const migracao = useRef<{ deps: DepsMigracao; manterCofreAntigo: boolean } | null>(null);
+
   const sincronizar = useCallback(() => {
-    if (!configRef.current || conflitoRef.current) return Promise.resolve();
+    if (!configRef.current || conflitoRef.current || migracao.current) return Promise.resolve();
     return enfileirar(() => ciclo().catch(falhou));
   }, [ciclo, enfileirar, falhou]);
 
@@ -232,90 +263,103 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, c
 
   /** Primeiro passo da ativação pelo cofre antigo: deriva as credenciais e vê se já existe cofre para esta frase. */
   const preparar = useCallback(async (frase: string): Promise<Preparacao> => {
+    const recusa = recusaCofreAntigo(localStorage);
+    if (recusa) throw new Error(recusa);
     const cred = await derivarCredenciais(frase);
     const p = await prepararAtivacao(await lerCofre(cred), remotoCofreAntigo(cred), dadosRef.current, 'cofre-antigo');
     return { ...p, destino: { origem: 'cofre-antigo', cred } };
   }, []);
 
-  /** Dependências da migração em andamento (guardadas enquanto o usuário escolhe uma versão). */
-  const migracao = useRef<DepsMigracao | null>(null);
+  /** Fontes comuns da migração (a conta é aberta pela frase ou pela config já ativa). */
+  const fontes = useCallback(
+    (abrirConta: Parameters<typeof criarDepsMigracao>[0]['abrirConta']) => ({
+      agora: new Date().toISOString(),
+      armazenamento: localStorage,
+      lerDados: () => dadosRef.current, // sempre os dados de agora
+      baixarArquivo: (nome: string, conteudo: string) => baixarArquivo(nome, conteudo),
+      abrirConta,
+      aplicarLocal: (d: Dados) => {
+        substituir(d);
+        dadosRef.current = d;
+      },
+      aoMigrar: (c: ConfigConta) => {
+        migracao.current = null;
+        aguardandoCofre.current = false;
+        salvarConfig(c);
+        setConflito(null);
+        setErro(null);
+        setPrecisaEntrar(false);
+        setStatus('sincronizado');
+      },
+    }),
+    [salvarConfig, substituir],
+  );
+
+  const rodarMigracao = useCallback(
+    (deps: DepsMigracao, agora: string): Promise<ResultadoMigracao> =>
+      enfileirar(async () => {
+        const r = await migrarParaConta(deps, agora);
+        migracao.current = r.tipo === 'escolha-pendente' ? { deps, manterCofreAntigo: r.manterCofreAntigo } : null;
+        return r;
+      }),
+    [enfileirar],
+  );
 
   /**
    * Ativação pela conta = migração (Fase 5): junta navegador, cofre antigo (com as credenciais salvas aqui) e conta.
-   * Chamar direto do clique: o backup .json é baixado de forma síncrona, antes de qualquer await de rede.
+   * Chamar direto do clique: `criarDepsMigracao` baixa o backup de forma síncrona, antes de qualquer await de rede.
    */
   const migrarConta = useCallback(
     (frase: string): Promise<ResultadoMigracao> => {
-      const agora = new Date().toISOString();
-      const navegador = dadosRef.current;
-      baixarArquivo(nomeBackup(agora), JSON.stringify(navegador, null, 2)); // no clique
-      const armz = armazenamentoMigracao(localStorage);
-      const sessao = sessaoAtual().then((s) => {
-        if (!s) throw new SessaoExpirada();
-        return s;
+      const f = fontes(() => {
+        const sessao = sessaoAtual().then((x) => {
+          if (!x) throw new SessaoExpirada();
+          return x;
+        });
+        const cliente = clienteSupabase().then((c) => c as unknown as ClienteCofre);
+        const chave = sessao.then((x) => derivarChaveDaConta(frase, x.userId));
+        const remoto = Promise.all([cliente, chave]).then(([c, k]) => remotoDaConta(c, k));
+        return {
+          remoto: {
+            // a leitura não depende da chave: roda em paralelo com a derivação
+            ler: async () => (await sessao, lerCofreDaConta(await cliente)),
+            gravar: async (b, e) => (await remoto).gravar(b, e),
+            apagar: async () => (await remoto).apagar(),
+          },
+          cifra: remoto,
+          identidade: Promise.all([sessao, chave]).then(([x, k]) => ({ userId: x.userId, email: x.email, chave: k.chave })),
+        };
       });
-      const cliente = clienteSupabase().then((c) => c as unknown as ClienteCofre);
-      // conta e chave ativas, preenchidas quando a chave fica pronta (antes de qualquer gravação ou aplicação)
-      let ativa: { userId: string; email: string; chave: string } | null = null;
-      const conta = Promise.all([cliente, sessao]).then(async ([c, s]) => {
-        const k = await derivarChaveDaConta(frase, s.userId);
-        ativa = { userId: s.userId, email: s.email, chave: k.chave };
-        return remotoDaConta(c, k);
-      });
-      const deps: DepsMigracao = {
-        lerNavegador: () => navegador,
-        lerCofreAntigo: async () => {
-          const c = configAntiga();
-          return c && c.origem === 'cofre-antigo' ? lerCofreAntigoCom(c.cred, navegador) : null;
-        },
-        conta: {
-          // a leitura não depende da chave: roda em paralelo com a derivação
-          ler: async () => (await sessao, lerCofreDaConta(await cliente)),
-          gravar: async (b, e) => (await conta).gravar(b, e),
-          apagar: async () => (await conta).apagar(),
-        },
-        cifraConta: () => conta,
-        baixarBackup: () => undefined, // já baixado acima, no clique
-        guardarCopia: (d, origem) => {
-          try {
-            armz.guardarCopia(d, origem, new Date().toISOString());
-          } catch {
-            throw new Error('Sem espaço para guardar a cópia de segurança neste navegador; nada foi alterado.');
-          }
-        },
-        aplicarLocal: (d) => {
-          substituir(d);
-          dadosRef.current = d;
-        },
-        arquivarCofreAntigo: () => armz.arquivarCofreAntigo(),
-        marcarMigrado: (em, estado) => {
-          if (!ativa) throw new Error('Conta não identificada.');
-          migracao.current = null;
-          aguardandoCofre.current = false;
-          salvarConfig({ origem: 'conta', ...ativa, versao: estado.versao, impressao: impressao(estado.dados), ultimaSync: new Date().toISOString(), migradoEm: em });
-          setConflito(null);
-          setErro(null);
-          setPrecisaEntrar(false);
-          setStatus('sincronizado');
-        },
-        migradoEm: () => null, // aparelho ainda sem conta ativa
-      };
-      migracao.current = deps;
-      return enfileirar(async () => {
-        const r = await migrarParaConta(deps, agora);
-        if (r.tipo === 'falhou') migracao.current = null;
-        return r;
-      });
+      return rodarMigracao(criarDepsMigracao(f), f.agora);
     },
-    [enfileirar, salvarConfig, substituir],
+    [fontes, rodarMigracao],
   );
+
+  /** Nova tentativa de ler o cofre antigo (quando falhou por erro passageiro), com a conta já ativa. */
+  const repetirMigracao = useCallback((): Promise<ResultadoMigracao> => {
+    const c = configRef.current;
+    if (!c || c.origem !== 'conta') return Promise.resolve({ tipo: 'falhou', erro: 'Entre na conta antes.' });
+    const f = fontes(() => {
+      const remoto = abrirRemoto(c);
+      return {
+        remoto: { ler: async () => (await remoto).ler(), gravar: async (b, e) => (await remoto).gravar(b, e), apagar: async () => (await remoto).apagar() },
+        cifra: remoto,
+        identidade: Promise.resolve({ userId: c.userId, email: c.email, chave: c.chave }),
+      };
+    });
+    return rodarMigracao(criarDepsMigracao(f), f.agora);
+  }, [fontes, rodarMigracao]);
 
   /** Conclui a migração com a versão escolhida (navegador, cofre antigo ou conta). */
   const concluirEscolhaConta = useCallback(
     (escolhido: Candidato): Promise<ResultadoMigracao> => {
-      const deps = migracao.current;
-      if (!deps) return Promise.resolve({ tipo: 'falhou', erro: 'A migração não está mais em andamento; entre na conta de novo.' });
-      return enfileirar(() => concluirEscolha(deps, escolhido, new Date().toISOString()));
+      const m = migracao.current;
+      if (!m) return Promise.resolve({ tipo: 'falhou', erro: 'A migração não está mais em andamento; entre na conta de novo.' });
+      return enfileirar(async () => {
+        const r = await concluirEscolha(m.deps, escolhido, new Date().toISOString(), m.manterCofreAntigo);
+        if (r.tipo !== 'falhou') migracao.current = null;
+        return r;
+      });
     },
     [enfileirar],
   );
@@ -327,6 +371,8 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, c
         setConflito(null);
         setStatus('sincronizando');
         try {
+          const recusa = prep.destino.origem === 'cofre-antigo' ? recusaCofreAntigo(localStorage) : null;
+          if (recusa) throw new Error(recusa);
           const c = configDe(prep.destino, prep.tipo === 'existente' ? prep.versao : 0);
           if (prep.tipo === 'existente' && escolha === 'nuvem') aplicarRemoto(c, prep.remoto, prep.versao);
           else if (!(await enviar(c, c.versao))) throw new Error('Outro aparelho gravou neste instante. Tente ativar de novo.');
@@ -420,6 +466,7 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, c
     },
     preparar,
     migrarConta,
+    repetirMigracao,
     concluirEscolhaConta,
     concluir,
     resolverConflito,

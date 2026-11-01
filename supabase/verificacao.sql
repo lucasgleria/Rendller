@@ -205,6 +205,12 @@ begin
   if has_function_privilege('anon', 'public.gravar_cofre(integer,text,text)', 'execute') then
     raise exception 'FALHOU: anon pode executar gravar_cofre';
   end if;
+  if not exists (
+    select 1 from pg_policy
+     where polrelid = 'public.cofres'::regclass and polname = 'cofres: dono altera' and polwithcheck is not null
+  ) then
+    raise exception 'FALHOU: a política de update não tem WITH CHECK';
+  end if;
   if not exists (select 1 from pg_trigger where tgrelid = 'public.cofres'::regclass and tgname = 'cofres_versao_sequencial') then
     raise exception 'FALHOU: trigger cofres_versao_sequencial ausente';
   end if;

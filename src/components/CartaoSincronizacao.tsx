@@ -109,6 +109,7 @@ export default function CartaoSincronizacao({ s, dados }: { s: Sincronizacao; da
             </p>
           ) : null}
           {sync.origem === 'cofre-antigo' && comConta ? <SecaoConta s={s} aoConcluir={setResumo} /> : null}
+          {sync.origem === 'conta' && sync.cofreAntigoAtivo ? <SecaoConta s={s} aoConcluir={setResumo} repetir /> : null}
           {sync.conflito && (
             <div className="aviso amarelo">
               Este aparelho e a nuvem foram alterados ao mesmo tempo. Nuvem: {aportes(sync.conflito.remoto.aportes.length)}
@@ -200,12 +201,15 @@ export default function CartaoSincronizacao({ s, dados }: { s: Sincronizacao; da
         )
       ) : (
         <>
-          {comConta ? (
+          {comConta ? <SecaoConta s={s} aoConcluir={setResumo} /> : null}
+          {sync.cofreAntigoArquivado ? (
+            // aparelho já migrado não volta ao cofre antigo (o hook também recusa)
+            <p className="mut" style={{ fontSize: 13 }}>
+              Este aparelho já migrou para a conta: entre com a conta para voltar a sincronizar. Cofre antigo mantido (não sincroniza mais neste aparelho).
+            </p>
+          ) : (
             <>
-              <SecaoConta s={s} aoConcluir={setResumo} />
-              <h3 style={{ margin: '16px 0 4px' }}>Ou só com frase-senha (cofre antigo)</h3>
-            </>
-          ) : null}
+          {comConta ? <h3 style={{ margin: '16px 0 4px' }}>Ou só com frase-senha (cofre antigo)</h3> : null}
           <div className="campos">
             <label className="campo largo">
               <span>Frase-senha (mínimo {TAMANHO_MINIMO_FRASE} caracteres; prefira 4 ou mais palavras)</span>
@@ -223,6 +227,8 @@ export default function CartaoSincronizacao({ s, dados }: { s: Sincronizacao; da
               {ocupado ? 'Protegendo a chave…' : 'Ativar sincronização'}
             </button>
           </div>
+            </>
+          )}
         </>
       )}
     </div>

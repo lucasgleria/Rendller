@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { TAMANHO_MINIMO_FRASE } from '../cofre';
 import { sessaoAtual, temSessaoSalva, type Sessao } from '../conta';
 import type { Candidato, OrigemDados } from '../domain/migracao';
-import type { Contagens, ResultadoMigracao } from '../migracaoConta';
+import { AVISO_COFRE_ANTIGO_PASSAGEIRO, type Contagens, type ResultadoMigracao } from '../migracaoConta';
 import type { Sincronizacao } from '../sincronizacao';
 import { AVISO_MIGRAR_TODOS } from '../sincronizacaoNucleo';
 import { DOIS_SEGREDOS, EntrarNaConta } from './ContaForms';
@@ -28,7 +28,16 @@ export function ResumoMigracao({ contagens, backup, avisos }: { contagens: Conta
  * "Entrar com conta": e-mail e senha, depois a frase-senha, e então a migração (navegador, cofre antigo e conta).
  * O clique em "Sincronizar com a conta" chama a migração direto: o backup é baixado antes de qualquer rede.
  */
-export function SecaoConta({ s, aoConcluir }: { s: Sincronizacao; aoConcluir: (r: Extract<ResultadoMigracao, { tipo: 'concluida' }>) => void }) {
+export function SecaoConta({
+  s,
+  aoConcluir,
+  repetir = false,
+}: {
+  s: Sincronizacao;
+  aoConcluir: (r: Extract<ResultadoMigracao, { tipo: 'concluida' }>) => void;
+  /** Conta já ativa e cofre antigo não lido (erro passageiro): só oferece ler o cofre antigo de novo. */
+  repetir?: boolean;
+}) {
   const { sync } = s;
   const [sessao, setSessao] = useState<Sessao | null>(null);
   const [frase, setFrase] = useState('');
@@ -67,12 +76,32 @@ export function SecaoConta({ s, aoConcluir }: { s: Sincronizacao; aoConcluir: (r
       .finally(() => setOcupado(false));
   };
 
+  const lerDeNovo = () => {
+    setAviso(null);
+    setOcupado(true);
+    s.repetirMigracao()
+      .then(tratar)
+      .finally(() => setOcupado(false));
+  };
+
   const escolher = (c: Candidato) => {
     setOcupado(true);
     s.concluirEscolhaConta(c)
       .then((r) => tratar(r.tipo === 'concluida' ? { ...r, backup: escolha?.backup ?? null, contagens: escolha?.contagens ?? null } : r))
       .finally(() => setOcupado(false));
   };
+
+  if (repetir && !escolha) {
+    return (
+      <div style={{ marginBottom: 16 }}>
+        <div className="aviso amarelo">{AVISO_COFRE_ANTIGO_PASSAGEIRO}.</div>
+        {aviso ? <div className="aviso vermelho">{aviso}</div> : null}
+        <button className="btn" disabled={ocupado} onClick={lerDeNovo}>
+          {ocupado ? 'Lendo…' : 'Ler o cofre antigo de novo'}
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div style={{ marginBottom: 16 }}>

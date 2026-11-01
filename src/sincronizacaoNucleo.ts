@@ -20,6 +20,9 @@ export type ConfigSync =
   | (Comum & { origem: 'cofre-antigo'; cred: Credenciais })
   | (Comum & { origem: 'conta'; userId: string; email: string; chave: string; migradoEm?: string }); // chave derivada da frase, como no cofre antigo
 
+export const CHAVE_CONFIG_ANTIGA = 'rendller:sync:v1';
+export const CHAVE_CONTA = 'rendller:conta:v1';
+
 export const MENSAGEM_FRASE_DIFERENTE = 'Frase-senha diferente da usada nesta conta';
 /** Mostrado antes de entrar na conta quando o cofre antigo está ativo neste aparelho. */
 export const AVISO_MIGRAR_TODOS =

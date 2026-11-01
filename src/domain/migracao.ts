@@ -1,5 +1,5 @@
 import { normalizarParametros } from './padroes';
-import { impressao } from './sincronia';
+import { impressao } from './impressao';
 import type { Aporte, Classe, Dados, Parametros } from './types';
 
 /** Versão do formato que este app grava. Versões menores são migradas; maiores são recusadas. */
