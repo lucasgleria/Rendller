@@ -151,6 +151,7 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, c
         const d = carga.podeGravar ? adocaoDeConfig(configRef.current, nova, dadosRef.current, carga.dados) : null;
         if (d?.adotar) {
           if (d.guardarCopia) guardarCopia(dadosRef.current);
+          if (d.travar) aguardandoCofre.current = true; // lê a nuvem antes de qualquer envio
           if (impressao(d.dados) !== impressao(dadosRef.current)) {
             substituir(d.dados);
             dadosRef.current = d.dados;

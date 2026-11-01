@@ -78,6 +78,11 @@ export function avisoCarga(c: Pick<Carga, 'podeGravar' | 'motivo' | 'temV1'>): s
   return `Dados salvos ilegíveis; cópia guardada. Restaure um backup.${c.temV1 ? ' Há também uma versão antiga dos dados intacta neste navegador (rendller:dados:v1).' : ''}`;
 }
 
+/** Grava os dados na chave atual (`rendller:dados:v2`). Lança se não houver espaço. */
+export function gravarDados(s: Pick<Storage, 'setItem'>, d: Dados) {
+  s.setItem(CHAVE, JSON.stringify(d));
+}
+
 function carregarLocal(): Carga {
   try {
     return carregarDe(localStorage);
@@ -100,7 +105,7 @@ export function useDados() {
   useEffect(() => {
     if (!estado.podeGravar) return;
     try {
-      localStorage.setItem(CHAVE, JSON.stringify(estado.dados));
+      gravarDados(localStorage, estado.dados);
       setErro(false);
     } catch {
       setErro(true);

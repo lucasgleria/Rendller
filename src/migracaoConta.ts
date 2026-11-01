@@ -1,3 +1,4 @@
+import { gravarDados } from './armazenamento';
 import { remotoCofreAntigo, type Credenciais } from './cofre';
 import { planejarMigracao, type Candidato, type OrigemDados, type PlanoMigracao } from './domain/migracao';
 import { impressao } from './domain/impressao';
@@ -121,9 +122,12 @@ export function adocaoDeConfig(
   nova: ConfigSync | null,
   memoria: Dados,
   salvo: Dados,
-): { adotar: boolean; dados: Dados; guardarCopia: boolean } {
-  if (!nova || (anterior && mesmaIdentidade(anterior, nova))) return { adotar: false, dados: memoria, guardarCopia: false };
-  return { adotar: true, dados: salvo, guardarCopia: impressao(memoria) !== impressao(salvo) };
+): { adotar: boolean; dados: Dados; guardarCopia: boolean; travar: boolean } {
+  if (!nova || (anterior && mesmaIdentidade(anterior, nova))) return { adotar: false, dados: memoria, guardarCopia: false, travar: false };
+  // dados salvos diferentes da assinatura da config (a outra aba ainda não gravou dados:v2?): nada é enviado;
+  // a trava força ler a nuvem no próximo ciclo e trata a diferença como conflito
+  const travar = impressao(salvo) !== nova.impressao;
+  return { adotar: true, dados: salvo, guardarCopia: impressao(memoria) !== impressao(salvo), travar };
 }
 
 export interface DepsMigracao {
@@ -358,10 +362,18 @@ export function criarDepsMigracao(f: FontesMigracao): DepsMigracao {
         throw new Error('Sem espaço para guardar a cópia de segurança neste navegador; nada foi alterado.');
       }
     },
-    aplicarLocal: (d) => f.aplicarLocal(d),
+    aplicarLocal: (d) => {
+      gravarDados(s, d); // síncrono: dados:v2 vem antes da config da conta, para outra aba não ler dados velhos
+      f.aplicarLocal(d);
+    },
     arquivarCofreAntigo: () => armz.arquivarCofreAntigo(),
     marcarMigrado: async (em, estado) => {
       const id = await conta.identidade;
+      try {
+        gravarDados(s, f.lerDados()); // garante dados:v2 atual antes da config da conta
+      } catch {
+        /* sem espaço: os dados já foram gravados ao aplicar; a trava da adoção cobre o resto */
+      }
       f.aoMigrar({
         origem: 'conta',
         ...id,
