@@ -3,6 +3,7 @@ import { derivarChaveDaConta, derivarCredenciais } from './cofre';
 import {
   classificarErroRecuperacao,
   contaDisponivel,
+  urlBaseSupabase,
   lerCofreDaConta,
   MENSAGEM_LINK_VENCIDO,
   MENSAGEM_RECUPERACAO_SEM_REDE,
@@ -244,6 +245,10 @@ describe('configs da conta e do cofre antigo', () => {
 });
 
 describe('cliente da conta', () => {
+  it('aceita a URL do projeto com ou sem o sufixo da API REST', () => {
+    const base = 'https://abcdef.supabase.co';
+    for (const u of [base, `${base}/`, `${base}/rest/v1`, `${base}/rest/v1/`, ` ${base}/REST/V1/ `]) expect(urlBaseSupabase(u)).toBe(base);
+  });
   it('sem as variáveis do Supabase a conta não está disponível', () => {
     vi.stubEnv('VITE_SUPABASE_URL', '');
     vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', '');
