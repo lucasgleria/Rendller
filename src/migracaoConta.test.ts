@@ -634,3 +634,52 @@ describe('corrida entre a config da conta e os dados salvos', () => {
     expect(JSON.parse(s.getItem('rendller:dados:v2')!).aportes.map((a: { id: string }) => a.id)).toEqual(['c']);
   });
 });
+
+describe('dados ilegíveis e falta de espaço na migração', () => {
+  function fontesSimples(s: ReturnType<typeof storage>, o: { local: Dados; banco: BancoFalso; uid: string }) {
+    const chave = { id: o.uid, chave: credAleatoria().chave };
+    const conta = remotoDaConta(clienteFalso(o.banco, () => o.uid), chave);
+    const estado = { local: o.local, config: null as null | ConfigConta };
+    const f: FontesMigracao = {
+      agora: AGORA,
+      armazenamento: s,
+      lerDados: () => estado.local,
+      baixarArquivo: () => undefined,
+      abrirConta: () => ({ remoto: conta, cifra: Promise.resolve(conta), identidade: Promise.resolve({ userId: o.uid, email: 'a@b.c', chave: chave.chave }) }),
+      aplicarLocal: (d) => (estado.local = d),
+      aoMigrar: (c) => (estado.config = c),
+    };
+    return { f, estado };
+  }
+
+  it('com dados ilegíveis, a migração não grava dados:v2 se nada foi aplicado', async () => {
+    const s = storage({ 'rendller:dados:v2': '{quebrado' });
+    const x = fontesSimples(s, { local: com(), banco: new BancoFalso(), uid: novoUid() }); // ilegível: o app usa dados vazios
+    const r = await migrarParaConta(criarDepsMigracao(x.f), AGORA);
+    expect(r).toMatchObject({ tipo: 'concluida', plano: { acao: 'enviar', origem: 'navegador' } });
+    expect(s.getItem('rendller:dados:v2')).toBe('{quebrado');
+    expect(x.estado.config).toMatchObject({ origem: 'conta' });
+  });
+
+  it('sem espaço para dados:v2 depois de gravar a conta: conclui, aplica em memória e arquiva', async () => {
+    const cred = credAleatoria();
+    await noCofreAntigo(cred, com('x', 'y'));
+    const base = storage({ [CHAVE_SYNC_V1]: JSON.stringify({ cred, versao: 1, impressao: '', ultimaSync: '' }) });
+    const s = {
+      ...base,
+      setItem: (k: string, v: string) => {
+        if (k === 'rendller:dados:v2') throw new Error('QuotaExceededError');
+        base.setItem(k, v);
+      },
+    };
+    const banco = new BancoFalso();
+    const uid = novoUid();
+    const x = fontesSimples(s as ReturnType<typeof storage>, { local: com(), banco, uid });
+    const r = await migrarParaConta(criarDepsMigracao(x.f), AGORA);
+    expect(r).toMatchObject({ tipo: 'concluida', plano: { acao: 'enviar', origem: 'cofre-antigo' } });
+    expect(x.estado.local.aportes.map((a) => a.id)).toEqual(['x', 'y']);
+    expect(base.getItem(CHAVE_SYNC_V1)).toBeNull();
+    expect(base.getItem(CHAVE_SYNC_MIGRADO)).not.toBeNull();
+    expect(banco.linhas.get(uid)?.versao).toBe(1);
+  });
+});
