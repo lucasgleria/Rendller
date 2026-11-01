@@ -12,8 +12,9 @@ import { NuvemIndisponivel, type Cifra, type Remoto, type RespostaRemota } from 
 const URL_SUPABASE = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const CHAVE_PUBLICAVEL = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string | undefined;
 
+/** Lido na chamada (não no carregamento do módulo) para os testes poderem simular a ausência das variáveis. */
 export function contaDisponivel(): boolean {
-  return !!(URL_SUPABASE && CHAVE_PUBLICAVEL);
+  return !!(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY);
 }
 
 let cliente: Promise<SupabaseClient> | null = null;
