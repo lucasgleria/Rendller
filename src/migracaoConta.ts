@@ -1,9 +1,10 @@
 import { remotoCofreAntigo, type Credenciais } from './cofre';
 import { planejarMigracao, type Candidato, type OrigemDados, type PlanoMigracao } from './domain/migracao';
+import { impressao } from './domain/impressao';
 import { daNuvem, paraNuvem } from './domain/sincronia';
 import type { Dados } from './domain/types';
 import { SessaoExpirada, type Cifra, type Remoto, type RespostaRemota } from './remoto';
-import { MENSAGEM_FRASE_DIFERENTE } from './sincronizacaoNucleo';
+import { CHAVE_CONTA, lerContaSalva, MENSAGEM_FRASE_DIFERENTE, type ConfigSync } from './sincronizacaoNucleo';
 
 /**
  * Migração para a conta (ADR-0004), feita no navegador: junta navegador, cofre antigo e conta, baixa um backup
@@ -17,6 +18,45 @@ export const CHAVE_SYNC_MIGRADO = 'rendller:sync:v1:migrado';
 export const CHAVE_COPIA_CONTA = 'rendller:copia-antes-da-conta';
 
 export const nomeBackup = (agora: string) => `rendller-antes-da-conta-${agora.slice(0, 10)}.json`;
+
+/** Quantas versões substituídas ficam guardadas na cópia (as mais recentes). */
+const MAXIMO_COPIAS = 3;
+
+export const AVISO_COFRE_ANTIGO_PASSAGEIRO = 'Não consegui ler o cofre antigo; ele continua ativo neste aparelho — tente de novo depois';
+export const AVISO_COFRE_ANTIGO_SEM_ACESSO =
+  'O cofre antigo recusou o acesso (apagado ou sem permissão); ele foi arquivado neste aparelho, sem apagar nada.';
+export const MENSAGEM_JA_MIGROU = 'Este aparelho já migrou para a conta';
+
+export type ConfigConta = Extract<ConfigSync, { origem: 'conta' }>;
+
+/** O cofre antigo recusou o acesso (403): não adianta tentar de novo; pode arquivar. */
+export class CofreAntigoSemAcesso extends Error {
+  constructor() {
+    super('o cofre antigo recusou o acesso');
+    this.name = 'CofreAntigoSemAcesso';
+  }
+}
+
+/** O cofre antigo não pode ser ativado de novo num aparelho que já migrou para a conta. */
+export function recusaCofreAntigo(s: Pick<Storage, 'getItem'>): string | null {
+  return s.getItem(CHAVE_SYNC_MIGRADO) != null ? MENSAGEM_JA_MIGROU : null;
+}
+
+/** `rendller:sync:v1` nunca é regravado depois do arquivamento (uma aba antiga não desarquiva o cofre). */
+export function podeGravarCofreAntigo(s: Pick<Storage, 'getItem'>): boolean {
+  return s.getItem(CHAVE_SYNC_MIGRADO) == null;
+}
+
+/**
+ * Config que esta aba deve usar, relida do `localStorage`: se outra aba migrou (sync:v1 sumiu e há :migrado),
+ * o cofre antigo é desligado aqui e vale a conta, se houver.
+ */
+export function configDaAba(c: ConfigSync | null, s: Pick<Storage, 'getItem'>): ConfigSync | null {
+  if (c?.origem === 'cofre-antigo' && s.getItem(CHAVE_SYNC_V1) == null && s.getItem(CHAVE_SYNC_MIGRADO) != null) {
+    return lerContaSalva(s.getItem(CHAVE_CONTA));
+  }
+  return c;
+}
 
 export interface DepsMigracao {
   lerNavegador(): Dados;
@@ -33,8 +73,11 @@ export interface DepsMigracao {
   aplicarLocal(d: Dados): void;
   /** Move `rendller:sync:v1` para `rendller:sync:v1:migrado`; NÃO chama `apagar()`. */
   arquivarCofreAntigo(): void;
-  /** Grava a config da conta com `migradoEm`, a versão do cofre e os dados que ficaram nos dois lados. */
-  marcarMigrado(em: string, estado: { versao: number; dados: Dados }): void;
+  /**
+   * Grava a config da conta com a versão do cofre e os dados que ficaram nos dois lados. `em` é null quando o
+   * cofre antigo não pôde ser lido (erro passageiro): sem `migradoEm`, uma nova tentativa roda de novo.
+   */
+  marcarMigrado(em: string | null, estado: { versao: number; dados: Dados }): void | Promise<void>;
   migradoEm(): string | null;
 }
 
@@ -42,7 +85,7 @@ export type Contagens = Record<OrigemDados, number | null>;
 
 export type ResultadoMigracao =
   | { tipo: 'concluida'; plano: PlanoMigracao; avisos: string[]; backup: string | null; contagens: Contagens | null }
-  | { tipo: 'escolha-pendente'; candidatos: Candidato[]; avisos: string[]; backup: string; contagens: Contagens }
+  | { tipo: 'escolha-pendente'; candidatos: Candidato[]; avisos: string[]; backup: string; contagens: Contagens; manterCofreAntigo: boolean }
   | { tipo: 'falhou'; erro: string }; // nada local foi alterado; dá para repetir
 
 /** Lê o cofre antigo com as credenciais salvas neste aparelho (a frase não é pedida de novo). */
@@ -50,22 +93,27 @@ export async function lerCofreAntigoCom(cred: Credenciais, local: Dados): Promis
   const r = remotoCofreAntigo(cred);
   const lido = await r.ler();
   if (lido.tipo === 'inexistente') return null;
-  if (lido.tipo !== 'ok') throw new Error('o cofre antigo recusou o acesso');
+  if (lido.tipo === 'negado') throw new CofreAntigoSemAcesso();
+  if (lido.tipo !== 'ok') throw new Error('resposta inesperada do cofre antigo');
   return lido.envelope ? daNuvem(await r.decifrar(lido.envelope), local) : null;
 }
 
 /** Efeitos locais da migração sobre um `Storage` (testáveis com um em memória). */
 export function armazenamentoMigracao(s: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>) {
   return {
+    /** Acrescenta uma versão (sem repetir a mesma impressão) e mantém só as mais recentes. Sem espaço, lança. */
     guardarCopia(d: Dados, origem: OrigemDados, em: string) {
-      let versoes: unknown[] = [];
+      let versoes: { em: string; origem: OrigemDados; impressao?: string; dados: Dados }[] = [];
       try {
         const atual = JSON.parse(s.getItem(CHAVE_COPIA_CONTA) ?? 'null');
         if (Array.isArray(atual?.versoes)) versoes = atual.versoes;
       } catch {
         /* cópia anterior ilegível: começa outra (a anterior não é usada pelo app) */
       }
-      s.setItem(CHAVE_COPIA_CONTA, JSON.stringify({ versoes: [...versoes, { em, origem, dados: d }] }));
+      const marca = impressao(d);
+      const outras = versoes.filter((v) => (v.impressao ?? (v.dados ? impressao(v.dados) : '')) !== marca);
+      const todas = [...outras, { em, origem, impressao: marca, dados: d }].slice(-MAXIMO_COPIAS);
+      s.setItem(CHAVE_COPIA_CONTA, JSON.stringify({ versoes: todas }));
     },
     arquivarCofreAntigo() {
       const atual = s.getItem(CHAVE_SYNC_V1);
@@ -115,9 +163,15 @@ export async function migrarParaConta(d: DepsMigracao, agora: string): Promise<R
   d.baixarBackup(navegador, backup); // antes do primeiro await de rede
   try {
     const avisos: string[] = [];
+    // erro passageiro (rede, 5xx) não arquiva: o cofre antigo continua ativo para uma nova tentativa ler de novo
+    let manterCofreAntigo = false;
     const [antigo, lidoConta, cifra] = await Promise.all([
-      d.lerCofreAntigo().catch((e: Error) => {
-        avisos.push(`Não consegui ler o cofre antigo (${e.message || 'sem conexão'}); migrei os dados deste navegador. O cofre antigo continua intacto.`);
+      d.lerCofreAntigo().catch((e: unknown) => {
+        if (e instanceof CofreAntigoSemAcesso) avisos.push(AVISO_COFRE_ANTIGO_SEM_ACESSO);
+        else {
+          manterCofreAntigo = true;
+          avisos.push(AVISO_COFRE_ANTIGO_PASSAGEIRO);
+        }
         return null;
       }),
       d.conta.ler(),
@@ -126,7 +180,7 @@ export async function migrarParaConta(d: DepsMigracao, agora: string): Promise<R
     const conta = await conteudoDaConta(lidoConta, cifra, navegador);
     const contagens = contar(navegador, antigo, conta.dados);
     let plano = planejarMigracao(navegador, antigo, conta.dados);
-    if (plano.acao === 'escolher') return { tipo: 'escolha-pendente', candidatos: plano.candidatos, avisos, backup, contagens };
+    if (plano.acao === 'escolher') return { tipo: 'escolha-pendente', candidatos: plano.candidatos, avisos, backup, contagens, manterCofreAntigo };
     // conta sem cofre e nada a enviar: cria o cofre (vazio) para a sincronização seguir
     if (plano.acao === 'nada' && !conta.dados && lidoConta.tipo === 'inexistente') plano = { acao: 'enviar', dados: navegador, origem: 'navegador' };
 
@@ -134,6 +188,7 @@ export async function migrarParaConta(d: DepsMigracao, agora: string): Promise<R
     let final = navegador;
     if (plano.acao === 'enviar') {
       d.guardarCopia(navegador, 'navegador'); // antes de gravar
+      if (conta.dados) d.guardarCopia(conta.dados, 'conta'); // mesmo sem aportes: os parâmetros também são dados
       versao = await gravarNaConta(d, cifra, conta.base, plano.dados);
       final = plano.dados;
       if (plano.origem !== 'navegador') d.aplicarLocal(plano.dados);
@@ -142,8 +197,8 @@ export async function migrarParaConta(d: DepsMigracao, agora: string): Promise<R
       d.aplicarLocal(plano.dados);
       final = plano.dados;
     }
-    d.arquivarCofreAntigo();
-    d.marcarMigrado(agora, { versao, dados: final });
+    if (!manterCofreAntigo) d.arquivarCofreAntigo();
+    await d.marcarMigrado(manterCofreAntigo ? null : agora, { versao, dados: final });
     return { tipo: 'concluida', plano, avisos, backup, contagens };
   } catch (e) {
     return { tipo: 'falhou', erro: (e as Error).message || 'Falha na migração.' };
@@ -154,9 +209,9 @@ export async function migrarParaConta(d: DepsMigracao, agora: string): Promise<R
  * Conclui a migração com a versão escolhida pelo usuário. A versão que seria perdida (o navegador, quando outra
  * vence, ou o conteúdo da conta, quando ele vai ser sobrescrito) fica em `rendller:copia-antes-da-conta`.
  */
-export async function concluirEscolha(d: DepsMigracao, escolhido: Candidato, agora: string): Promise<ResultadoMigracao> {
+export async function concluirEscolha(d: DepsMigracao, escolhido: Candidato, agora: string, manterCofreAntigo = false): Promise<ResultadoMigracao> {
   try {
-    const navegador = d.lerNavegador();
+    const navegador = d.lerNavegador(); // lido agora: edições feitas durante a escolha contam
     const [lidoConta, cifra] = await Promise.all([d.conta.ler(), d.cifraConta()]);
     const conta = await conteudoDaConta(lidoConta, cifra, navegador);
     let versao = conta.base;
@@ -166,17 +221,83 @@ export async function concluirEscolha(d: DepsMigracao, escolhido: Candidato, ago
       d.guardarCopia(navegador, 'navegador');
       d.aplicarLocal(final);
     } else {
-      if (conta.dados && conta.dados.aportes.length) d.guardarCopia(conta.dados, 'conta');
+      // o navegador escolhido é o de agora, não a foto da escolha
+      const dados = escolhido.origem === 'navegador' ? navegador : escolhido.dados;
+      if (conta.dados) d.guardarCopia(conta.dados, 'conta'); // a conta vai ser sobrescrita
       if (escolhido.origem !== 'navegador') d.guardarCopia(navegador, 'navegador');
-      versao = await gravarNaConta(d, cifra, conta.base, escolhido.dados);
-      final = escolhido.dados;
+      versao = await gravarNaConta(d, cifra, conta.base, dados);
+      final = dados;
       if (escolhido.origem !== 'navegador') d.aplicarLocal(final);
     }
-    d.arquivarCofreAntigo();
-    d.marcarMigrado(agora, { versao, dados: final });
+    if (!manterCofreAntigo) d.arquivarCofreAntigo();
+    await d.marcarMigrado(manterCofreAntigo ? null : agora, { versao, dados: final });
     const plano: PlanoMigracao = escolhido.origem === 'conta' ? { acao: 'baixar', dados: final } : { acao: 'enviar', dados: final, origem: escolhido.origem };
     return { tipo: 'concluida', plano, avisos: [], backup: null, contagens: null };
   } catch (e) {
     return { tipo: 'falhou', erro: (e as Error).message || 'Falha na migração.' };
   }
+}
+
+/** O que o app oferece à migração; `criarDepsMigracao` monta as `DepsMigracao` sobre isto. */
+export interface FontesMigracao {
+  agora: string;
+  armazenamento: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+  /** Os dados deste navegador no momento da chamada (nunca uma foto antiga). */
+  lerDados(): Dados;
+  baixarArquivo(nome: string, conteudo: string): void;
+  /** Chamado só depois do backup: começa a rede (sessão, cliente, derivação da chave). */
+  abrirConta(): { remoto: Remoto; cifra: Promise<Cifra>; identidade: Promise<{ userId: string; email: string; chave: string }> };
+  lerCofreAntigo?(cred: Credenciais, local: Dados): Promise<Dados | null>;
+  aplicarLocal(d: Dados): void;
+  /** A migração terminou: a config da conta a ativar. */
+  aoMigrar(c: ConfigConta): void;
+}
+
+/**
+ * Monta as dependências da migração. O backup (.json) é gerado aqui, de forma síncrona, antes de abrir a conta:
+ * chamada direto do clique, o navegador não bloqueia o download.
+ */
+export function criarDepsMigracao(f: FontesMigracao): DepsMigracao {
+  const s = f.armazenamento;
+  const foto = f.lerDados();
+  f.baixarArquivo(nomeBackup(f.agora), JSON.stringify(foto, null, 2)); // antes de qualquer rede
+  const conta = f.abrirConta();
+  const armz = armazenamentoMigracao(s);
+  const lerAntigo = f.lerCofreAntigo ?? lerCofreAntigoCom;
+  return {
+    lerNavegador: () => f.lerDados(),
+    lerCofreAntigo: async () => {
+      if (recusaCofreAntigo(s)) return null;
+      const c = s.getItem(CHAVE_SYNC_V1);
+      const cfg = c ? (JSON.parse(c) as { cred?: Credenciais }) : null;
+      return cfg?.cred?.id ? lerAntigo(cfg.cred, f.lerDados()) : null;
+    },
+    conta: conta.remoto,
+    cifraConta: () => conta.cifra,
+    baixarBackup: () => undefined, // já baixado acima
+    guardarCopia: (d, origem) => {
+      try {
+        armz.guardarCopia(d, origem, new Date().toISOString());
+      } catch {
+        throw new Error('Sem espaço para guardar a cópia de segurança neste navegador; nada foi alterado.');
+      }
+    },
+    aplicarLocal: (d) => f.aplicarLocal(d),
+    arquivarCofreAntigo: () => armz.arquivarCofreAntigo(),
+    marcarMigrado: async (em, estado) => {
+      const id = await conta.identidade;
+      f.aoMigrar({
+        origem: 'conta',
+        ...id,
+        versao: estado.versao,
+        impressao: impressao(estado.dados),
+        ultimaSync: new Date().toISOString(),
+        ...(em ? { migradoEm: em } : {}),
+      });
+    },
+    migradoEm: () => {
+      const c = lerContaSalva(s.getItem(CHAVE_CONTA)); // a config real da conta
+      return c?.origem === 'conta' ? (c.migradoEm ?? null) : null;
+    },
+  };
 }
