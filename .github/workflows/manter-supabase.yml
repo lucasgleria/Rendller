@@ -1,0 +1,29 @@
+name: Manter o Supabase ativo
+
+# O plano Free do Supabase pausa o projeto depois de 7 dias de pouca atividade. Esta consulta leve (ping(), que não
+# lê dado nenhum) roda a cada 3 dias. Os secrets SUPABASE_URL e SUPABASE_PUBLISHABLE_KEY são cadastrados pelo
+# usuário em Settings → Secrets and variables → Actions. A chave publicável é pública por desenho; nunca use a secret.
+# O GitHub desativa workflows agendados de repositórios sem atividade por 60 dias.
+on:
+  schedule:
+    - cron: '17 9 */3 * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Consulta leve ao Supabase
+        env:
+          URL: ${{ secrets.SUPABASE_URL }}
+          KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          if [ -z "$URL" ] || [ -z "$KEY" ]; then
+            echo "::warning::Secrets SUPABASE_URL e SUPABASE_PUBLISHABLE_KEY não configurados; nada a fazer."
+            exit 0
+          fi
+          curl -fsS -X POST "$URL/rest/v1/rpc/ping" -H "apikey: $KEY" -H "content-type: application/json" -d '{}'
+          echo
