@@ -1,8 +1,8 @@
-# CLAUDE.md · Rendller (controle de CDB)
+# CLAUDE.md · Rendller (controle de renda fixa)
 
 Instruções para o Claude Code trabalhar neste repositório. Responda sempre em **português do Brasil**.
 
-O Rendller é um app web pessoal que controla aportes em CDB e renda fixa: rendimento bruto e líquido, IR, IOF, liquidez, vencimentos, concentração por instituição/FGC e simulação de novas ofertas. Ele substitui a planilha `controle_cdb_google_sheets` e segue as mesmas regras de domínio.
+O Rendller é um app web pessoal que controla aportes em renda fixa bancária (CDB, RDB, LC, LCI e LCA): rendimento bruto e líquido, IR, IOF, liquidez, vencimentos, concentração por instituição/FGC e simulação de novas ofertas. Ele substitui a planilha `controle_cdb_google_sheets` e segue as mesmas regras de domínio.
 
 **Missão:** mostrar quanto foi investido → por quanto tempo → em que instituição → sob quais condições → quanto rende bruto → quanto se perde em impostos → quanto se recebe líquido → quando o dinheiro fica disponível.
 
@@ -31,7 +31,7 @@ Antes de dizer que uma mudança está pronta, rode `npm test` e `npm run build`.
 | `src/domain/calculo.ts` | Motor: fator bruto por indexador, IOF, IR, `avaliar()`, `validarAporte()` |
 | `src/domain/carteira.ts` | Linhas com status e alertas, agrupamento por instituição/FGC, resumo, série de projeção |
 | `src/domain/padroes.ts` | Parâmetros padrão (tabelas de IR/IOF, FGC, CDI inicial) e listas de opções |
-| `src/domain/migracao.ts` | `migrarDados()`: lê `Dados` v1 e v2 (para sempre) e devolve v2; recusa versão mais nova |
+| `src/domain/migracao.ts` | `migrarDados()`: lê `Dados` v1 e v2 (para sempre) e devolve v2; recusa versão mais nova. `planejarMigracao()`: decisão pura da migração para a conta |
 | `src/domain/importacao.ts` | Importação da planilha .xlsx (abas `Aportes` e `Config`), do calendário ANBIMA (.xls) e validação de backup |
 | `src/domain/calculo.test.ts` | Testes obrigatórios (seção 6) |
 | `src/armazenamento.ts` | Persistência em `localStorage` (chave `rendller:dados:v2`; a `rendller:dados:v1` só é lida, nunca apagada; conteúdo ilegível vai para `rendller:dados:ilegivel`) e download de arquivos |
@@ -43,7 +43,7 @@ Antes de dizer que uma mudança está pronta, rode `npm test` e `npm run build`.
 | `src/conta.ts` | Conta no Supabase: cliente carregado sob demanda (`import()` único), entrar, sair, esqueci a senha, nova senha, e o cofre da conta como `Remoto` (`remotoDaConta` sobre `ClienteCofre`) |
 | `src/conta.falso.ts` | `ClienteCofre` falso com a semântica do SQL (só testes importam) |
 | `src/sincronizacaoNucleo.ts` | Núcleo sem React: configs (`rendller:sync:v1` cofre antigo, `rendller:conta:v1` conta), ciclo, ativação e classificação de falhas |
-| `src/migracaoConta.ts` | Migração para a conta (efeitos injetáveis): backup no clique, leitura de navegador, cofre antigo e conta, plano (`planejarMigracao` em `domain/migracao.ts`), escolha sem fusão, arquivamento do cofre antigo |
+| `src/migracaoConta.ts` | Migração para a conta (efeitos injetáveis, `criarDepsMigracao`): backup no clique, leitura de navegador, cofre antigo e conta, escolha sem fusão, cópias, arquivamento e pausa do cofre antigo, decisões de aba (`configParaAba`, `depoisDeDesativar`) |
 | `src/cofre.memoria.ts` | Armazém em memória do cofre antigo (só testes importam) |
 | `src/sincronizacao.ts` | Hook de sincronização (só efeitos: fila, estado, timers) sobre `Remoto & Cifra`; decisões puras em `domain/sincronia.ts` (`planejarCiclo`, `decidirCiclo`) |
 | `supabase/migrations/`, `supabase/verificacao.sql`, `supabase/README.md` | Tabela `cofres` com RLS, trigger de versão, `gravar_cofre()` e `ping()`; verificação manual com asserções; roteiro de configuração do Supabase e do Netlify ([supabase/README.md](supabase/README.md)) |
@@ -51,6 +51,9 @@ Antes de dizer que uma mudança está pronta, rode `npm test` e `npm run build`.
 | `netlify.toml` | Build, proxy da ANBIMA e cabeçalhos do deploy no Netlify |
 | `src/pages/*.tsx` | Telas: Painel, Aportes, Instituições, Simulador, Parâmetros |
 | `src/components/campos.tsx` | Campos de formulário (números pt-BR, percentuais com `escala={100}`) |
+| `src/components/CartaoSincronizacao.tsx`, `ContaForms.tsx`, `MigracaoConta.tsx` | Cartão de sincronização: cofre antigo, entrar com conta, nova senha, migração e escolha de versão |
+| `.github/workflows/ci.yml` | Testes e build a cada push (não precisa das variáveis do Supabase) |
+| `.github/workflows/manter-supabase.yml` | Consulta leve (`ping()`) a cada 3 dias para o projeto Supabase Free não pausar; secrets `SUPABASE_URL` e `SUPABASE_PUBLISHABLE_KEY` |
 | `src/formato.ts` | Formatação BRL, %, datas `dd/mm/aaaa` |
 
 Regras de arquitetura:
@@ -59,11 +62,11 @@ Regras de arquitetura:
 - As telas só exibem e editam; não fazem conta financeira própria.
 - Datas são strings ISO `aaaa-mm-dd`. Use as funções de `datas.ts`, nunca `new Date()` para aritmética de dias.
 - Percentuais e taxas são guardados em decimal (103% do CDI = `1.03`; 12% a.a. = `0.12`).
-- Os dados ficam no navegador (`localStorage`) e, se o usuário ativar, sincronizam entre aparelhos por um **cofre cifrado de ponta a ponta** (decisão do usuário em 04/10/2026, substituindo "só no navegador"). A frase-senha nunca sai do navegador; o servidor recebe só id, token e conteúdo AES-GCM. Sem a frase não há recuperação: o backup .json continua existindo. Mudanças no formato de `Dados` precisam continuar lendo backups, dados antigos e cofres já gravados: `normalizarParametros()` (em `padroes.ts`) mescla parâmetros novos com os padrões e migra dados antigos.
+- Os dados ficam no navegador (`localStorage`) e, se o usuário ativar, sincronizam entre aparelhos por um **cofre cifrado de ponta a ponta** (decisão do usuário em 04/10/2026, substituindo "só no navegador"). Desde 31/10/2026 (ADR-0002) o cofre principal é o da **conta no Supabase** (Auth + Postgres, plano Free, tabela `cofres` com RLS); o **cofre antigo** (`/api/cofre`, só frase-senha) fica apenas para quem ainda não migrou e para a migração, até ser desligado na Fase 7. A frase-senha nunca sai do navegador; o servidor recebe só id, token e conteúdo AES-GCM. Sem a frase não há recuperação: o backup .json continua existindo. Mudanças no formato de `Dados` precisam continuar lendo backups, dados antigos e cofres já gravados: `normalizarParametros()` (em `padroes.ts`) mescla parâmetros novos com os padrões e migra dados antigos.
 - O histórico do CDI e, com `cdiAutomatico`, o CDI de projeção **não** sincronizam (são públicos e cada aparelho baixa os seus); assim a atualização diária do CDI não gera conflito. Conflito real (os dois lados mudaram) nunca sobrescreve sozinho: o usuário escolhe, e a versão local descartada fica em `rendller:copia-antes-da-nuvem`.
 - **A conta identifica, a frase-senha cifra** (ADR-0003): a senha da conta (Supabase Auth) só autoriza o acesso à linha da conta e nunca é guardada pelo app; a chave vem da frase-senha com sal ligado ao id da conta, e o id da conta é o dado autenticado do AES-GCM. O Supabase guarda só o envelope cifrado. Sem `VITE_SUPABASE_URL` e `VITE_SUPABASE_PUBLISHABLE_KEY` no build, nada de conta aparece. Conta e cofre antigo têm configs separadas; com as duas, a conta sincroniza.
 - **Migração para a conta sem perda** (ADR-0004): entrar com conta roda `migrarParaConta`, que baixa um backup `.json` no próprio clique (antes de qualquer rede), lê navegador, cofre antigo (com as credenciais salvas) e conta, e envia, baixa ou pede escolha. Nunca funde versões; a versão substituída vai para `rendller:copia-antes-da-conta`. O cofre antigo nunca é apagado nesta etapa: sua config passa para `rendller:sync:v1:migrado`, ele não sincroniza mais neste aparelho e não pode ser reativado nele (nem por uma aba antiga). Se a leitura do cofre antigo falhar por erro passageiro, ele não é arquivado e a próxima tentativa lê de novo. A escolha usa sempre os dados atuais do navegador, e as cópias guardam no máximo as 3 últimas versões, sem repetir. Falha antes do arquivamento não altera nada local e pode ser repetida.
-- Rede só para dados públicos (CDI do Banco Central, calendário ANBIMA) e para o cofre cifrado. Dado do usuário nunca sai do navegador sem criptografia. Busca de rede fica fora de `src/domain/`; o domínio recebe os dados já baixados.
+- Rede só para dados públicos (CDI do Banco Central, calendário ANBIMA) e para o cofre cifrado (conta no Supabase ou cofre antigo). Dado do usuário nunca sai do navegador sem criptografia. Busca de rede fica fora de `src/domain/`; o domínio recebe os dados já baixados.
 
 ## 3. Regras de ouro
 
@@ -145,7 +148,10 @@ Qualquer mudança no motor precisa manter (e, se for regra nova, ganhar) testes 
 - [ ] Regimes salvos: sem marcador recebem o padrão atual, editados são mantidos, validação por tipo, dados da Fase 1 (carência em dias) são lidos; normalizar não gera pendência falsa na sincronização
 - [ ] Migração para a conta (`src/domain/migracao.test.ts`, `src/migracaoConta.test.ts`): plano (enviar, baixar, escolher, nada; vazio nunca vence), backup antes de qualquer rede e cópia antes de gravar, cofre antigo nunca apagado nem sincronizando sozinho, escolha sem fusão com a versão descartada guardada, falha repetível, frase errada sem gravação
 - [ ] Formato salvo (`src/domain/migracao.test.ts`, `src/armazenamento.test.ts`): v1 → v2 sem perder aporte nem mudar números, recusa de versão futura, conteúdo ilegível guardado e nunca sobrescrito
-- [ ] Sincronização (`src/sincronizacao.test.ts`): criptografia, o que sincroniza, servidor (autorização, versão, gravação simultânea), dois aparelhos
+- [ ] Sincronização (`src/sincronizacao.test.ts`): criptografia, o que sincroniza, servidor (autorização, versão, gravação simultânea), dois aparelhos, ajuste da impressão após normalizar, decisão do ciclo
+- [ ] Contrato do `Remoto` (`src/remoto.contrato.ts`), rodado contra o cofre antigo e contra a conta (`ClienteCofre` falso): versão, conflito, base maior, leitura após conflito, credencial ou sessão inválida
+- [ ] Conta (`src/conta.test.ts`): chaves por conta e diferentes do cofre antigo, frase errada sem gravação, nuvem indisponível (5xx, status 0), sessão expirada, conta diferente da ativada, frase e chave nunca enviadas, recuperação de senha (token_hash, link vencido, sem rede)
+- [ ] Migração em abas e saídas (`src/migracaoConta.test.ts`): aparelho migrado não volta ao cofre antigo, aba antiga não desarquiva, saída com migração incompleta não religa o cofre antigo, aba sem sincronização adota a conta
 
 Os valores esperados foram conferidos por um cálculo independente (CDI 13,90% a.a., feriados nacionais). Valide valores novos por um segundo caminho antes de gravá-los no teste; não ajuste o esperado só para o teste passar. Checagens de sanidade: rendimento ≥ 0, líquido < bruto, IR na faixa certa, IOF zero a partir de 30 dias.
 
@@ -188,6 +194,10 @@ Os valores esperados foram conferidos por um cálculo independente (CDI 13,90% a
 
 ## 11. Pendências conhecidas
 
-- Deploy no Netlify em https://rendller.netlify.app/ (`netlify.toml`), decidido pelo usuário em 04/10/2026. O GitHub Actions só roda CI.
+- Deploy no Netlify em https://rendller.netlify.app/ (`netlify.toml`), decidido pelo usuário em 04/10/2026. O GitHub Actions roda CI e o workflow contra a pausa do Supabase.
+- Fases 1 a 6 do `docs/plano-escalar.md` estão no branch `feat/conta-e-classes`, **sem push e sem deploy**. A versão publicada ainda é a anterior.
+- Falta a configuração real do Supabase e do Netlify ([supabase/README.md](supabase/README.md)), incluindo a verificação SQL (só vale "6 OK") e os secrets do workflow `manter-supabase.yml`.
+- Falta a conferência manual em perfis limpos de navegador (dois navegadores com a mesma conta, conflito, frase errada, recuperação de senha) e o ensaio da migração com um backup real.
+- **Fase 7** (desligar o cofre antigo e o `/api/cofre`): só depois de o usuário confirmar que todos os aparelhos migraram.
 - O CDI padrão (13,90%, da planilha) só vale até a primeira consulta ao Banco Central; depois o CDI de projeção acompanha o último CDI publicado.
 - IPCA projetado continua manual (estimativa informada pelo usuário).
