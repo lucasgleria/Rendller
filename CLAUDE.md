@@ -195,7 +195,7 @@ Os valores esperados foram conferidos por um cálculo independente (CDI 13,90% a
 ## 11. Pendências conhecidas
 
 - Deploy no Netlify em https://rendller.netlify.app/ (`netlify.toml`), decidido pelo usuário em 04/10/2026. O GitHub Actions roda CI e o workflow contra a pausa do Supabase.
-- Fases 1 a 6 do `docs/plano-escalar.md` estão no branch `feat/conta-e-classes`, **sem push e sem deploy**. A versão publicada ainda é a anterior.
+- Fases 1 a 6 do `docs/plano-escalar.md` estão no branch padrão (`claude/project-thread-ytvftg`) e publicadas no Netlify desde 01/11/2026 (commit `63e2a67`). Falta: conferência manual, migrar os aparelhos reais (todos no mesmo dia) e a Fase 7.
 - Falta a configuração real do Supabase e do Netlify ([supabase/README.md](supabase/README.md)), incluindo a verificação SQL (só vale "6 OK") e os secrets do workflow `manter-supabase.yml`.
 - Falta a conferência manual em perfis limpos de navegador (dois navegadores com a mesma conta, conflito, frase errada, recuperação de senha) e o ensaio da migração com um backup real.
 - **Fase 7** (desligar o cofre antigo e o `/api/cofre`): só depois de o usuário confirmar que todos os aparelhos migraram.
