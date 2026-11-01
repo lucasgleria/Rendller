@@ -24,6 +24,7 @@ function paginaInicial(): Pagina {
 export default function App() {
   const { dados, atualizar, atualizarAuto, substituir, erroGravacao, podeGravar, carga, aviso } = useDados();
   const [pagina, setPagina] = useState<Pagina>(paginaInicial);
+  const [menuAberto, setMenuAberto] = useState(false);
   // link de "esqueci a senha" da conta: /?token_hash=…&type=recovery (ou um link vencido)
   const [recuperacao] = useState(() => (contaDisponivel() ? recuperacaoNaUrl(location.search, location.hash) : null));
   const [recuperando, setRecuperando] = useState<'verificando' | 'pronto' | 'erro' | 'sem-rede' | null>(() =>
@@ -48,7 +49,16 @@ export default function App() {
   const sincronizacao = useSincronizacao(dados, substituir, carga, podeGravar);
   const { sync } = sincronizacao;
 
+  // menu do celular: fecha com Esc
+  useEffect(() => {
+    if (!menuAberto) return;
+    const aoTeclar = (e: KeyboardEvent) => e.key === 'Escape' && setMenuAberto(false);
+    window.addEventListener('keydown', aoTeclar);
+    return () => window.removeEventListener('keydown', aoTeclar);
+  }, [menuAberto]);
+
   const ir = (p: Pagina) => {
+    setMenuAberto(false);
     setPagina(p);
     history.replaceState(null, '', `#${p}`);
     window.scrollTo({ top: 0 });
@@ -63,9 +73,9 @@ export default function App() {
               <rect width="32" height="32" rx="8" fill="var(--accent)" />
               <path d="M8 22l6-6 4 4 6-8" stroke="var(--accent-text)" strokeWidth="3" fill="none" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
-            Rendller <span>controle de CDB</span>
+            Rendller <span>controle de renda fixa</span>
           </div>
-          <nav className="nav">
+          <nav id="menu-principal" className={`nav${menuAberto ? ' aberto' : ''}`}>
             {PAGINAS.map((p) => (
               <button key={p} aria-current={p === pagina ? 'page' : undefined} onClick={() => ir(p)}>
                 {p}
@@ -77,6 +87,21 @@ export default function App() {
               {rotuloSync(sync.status)}
             </button>
           )}
+          <button
+            className="menu-btn"
+            aria-label={menuAberto ? 'Fechar menu' : 'Abrir menu'}
+            aria-expanded={menuAberto}
+            aria-controls="menu-principal"
+            onClick={() => setMenuAberto((a) => !a)}
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden>
+              {menuAberto ? (
+                <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              ) : (
+                <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              )}
+            </svg>
+          </button>
         </div>
       </header>
       <main>

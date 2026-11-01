@@ -76,6 +76,19 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 .nav button[aria-current='page'] { background: var(--accent-soft); color: var(--accent); }
 .nav button:hover { color: var(--text); }
+.menu-btn { display: none; border: 1px solid var(--border); background: var(--surface); color: var(--text); width: 40px; height: 40px; border-radius: 10px; cursor: pointer; align-items: center; justify-content: center; padding: 0; }
+.menu-btn:hover { background: var(--surface-2); }
+
+/* Celular: marca, estado da sincronização e botão do menu numa linha; o menu abre embaixo, em lista */
+@media (max-width: 720px) {
+  .topo-inner { gap: 8px; padding: 8px 16px; }
+  .marca { flex: 1; min-width: 0; }
+  .marca span { display: none; }
+  .menu-btn { display: inline-flex; }
+  .nav { display: none; order: 10; flex: 1 0 100%; flex-direction: column; gap: 2px; overflow: visible; padding: 4px 0 8px; border-top: 1px solid var(--border); margin-top: 4px; }
+  .nav.aberto { display: flex; }
+  .nav button { text-align: left; padding: 12px; font-size: 16px; }
+}
 main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 64px; }
 h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.02em; }
 h2 { font-size: 16px; margin: 0 0 12px; }
