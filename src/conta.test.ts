@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { derivarChaveDaConta, derivarCredenciais } from './cofre';
 import {
   classificarErroRecuperacao,
@@ -245,7 +245,13 @@ describe('configs da conta e do cofre antigo', () => {
 
 describe('cliente da conta', () => {
   it('sem as variáveis do Supabase a conta não está disponível', () => {
-    expect(contaDisponivel()).toBe(false);
+    vi.stubEnv('VITE_SUPABASE_URL', '');
+    vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', '');
+    try {
+      expect(contaDisponivel()).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
   it('reconhece o link de recuperação (token_hash na query) e o link vencido', () => {
     expect(recuperacaoNaUrl('?token_hash=abc123&type=recovery', '')).toEqual({ tipo: 'token', tokenHash: 'abc123' });
