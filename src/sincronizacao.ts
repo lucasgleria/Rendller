@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Carga } from './armazenamento';
-import { baixarArquivo } from './armazenamento';
+import { baixarArquivo, carregarDe } from './armazenamento';
 import { derivarChaveDaConta, derivarCredenciais, lerCofre, remotoCofreAntigo, type Credenciais } from './cofre';
 import { clienteSupabase, lerCofreDaConta, remotoDaConta, sair, sessaoAtual, type ClienteCofre } from './conta';
 import type { Candidato } from './domain/migracao';
 import {
+  adocaoDeConfig,
   armazenamentoMigracao,
   concluirEscolha,
   configDaAba,
@@ -138,17 +139,38 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, c
     setConfigEstado(valida);
   }, []);
 
+  /**
+   * Passa a usar uma config vinda de outra aba. Antes do próximo ciclo, recarrega os dados que a outra aba salvou
+   * (e com os quais assinou a config), para não enviar a versão antiga da memória por cima; se a memória diferir,
+   * ela fica em `rendller:copia-antes-da-nuvem`.
+   */
+  const adotarConfig = useCallback(
+    (nova: ConfigSync | null) => {
+      if (nova) {
+        const carga = carregarDe(localStorage);
+        const d = carga.podeGravar ? adocaoDeConfig(configRef.current, nova, dadosRef.current, carga.dados) : null;
+        if (d?.adotar) {
+          if (d.guardarCopia) guardarCopia(dadosRef.current);
+          if (impressao(d.dados) !== impressao(dadosRef.current)) {
+            substituir(d.dados);
+            dadosRef.current = d.dados;
+          }
+        }
+      }
+      configRef.current = nova;
+      setConfigEstado(nova);
+      setStatus(nova ? 'sincronizando' : 'desligado');
+    },
+    [substituir],
+  );
+
   /** Relê a config do `localStorage` (outra aba pode ter migrado). Devolve false se não há o que sincronizar. */
   const revalidar = useCallback((): boolean => {
     // sem config, adota a que estiver salva agora (ex.: outra aba ativou a conta)
     const atual = configParaAba(configRef.current, localStorage);
-    if (atual !== configRef.current) {
-      configRef.current = atual;
-      setConfigEstado(atual);
-      setStatus(atual ? 'sincronizando' : 'desligado');
-    }
+    if (atual !== configRef.current) adotarConfig(atual);
     return !!atual;
-  }, []);
+  }, [adotarConfig]);
 
   useEffect(() => {
     const aoMudar = (e: StorageEvent) => {
@@ -158,16 +180,14 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, c
       if (migrada) {
         migracao.current = null;
         setEscolha(null);
-        configRef.current = migrada;
-        setConfigEstado(migrada);
-        setStatus('sincronizando');
+        adotarConfig(migrada); // com os dados que a outra aba salvou
         return;
       }
       revalidar();
     };
     window.addEventListener('storage', aoMudar);
     return () => window.removeEventListener('storage', aoMudar);
-  }, [revalidar]);
+  }, [adotarConfig, revalidar]);
 
   /** Operações em fila: nunca duas conversas com o servidor ao mesmo tempo. */
   const enfileirar = useCallback(<T,>(f: () => Promise<T>): Promise<T> => {
@@ -448,9 +468,17 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, c
   const desativar = useCallback(() => {
     const ativa = configRef.current;
     const d = depoisDeDesativar(ativa, localStorage);
+    // migração incompleta: o cofre antigo fica guardado, mas não volta a sincronizar sozinho. Pausa ANTES de
+    // tirar a conta; sem espaço para pausar, a conta continua ativa.
+    if (d.pausarCofreAntigo) {
+      try {
+        armazenamentoMigracao(localStorage).pausarCofreAntigo();
+      } catch {
+        setErro('Sem espaço neste navegador para guardar a config do cofre antigo; a conta continua ativa. Libere espaço e tente sair de novo.');
+        return;
+      }
+    }
     salvarConfig(null, ativa?.origem);
-    // migração incompleta: o cofre antigo fica guardado, mas não volta a sincronizar sozinho
-    if (d.pausarCofreAntigo) armazenamentoMigracao(localStorage).pausarCofreAntigo();
     if (d.proxima) salvarConfig(d.proxima);
     setConflito(null);
     setErro(d.aviso);

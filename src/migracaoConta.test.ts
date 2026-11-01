@@ -6,9 +6,10 @@ import { remotoDaConta } from './conta';
 import { BancoFalso, clienteFalso, novoUid } from './conta.falso';
 import type { Candidato } from './domain/migracao';
 import { novoAporte, parametrosPadrao } from './domain/padroes';
-import { paraNuvem } from './domain/sincronia';
+import { impressao, paraNuvem, planejarCiclo } from './domain/sincronia';
 import type { Dados } from './domain/types';
 import {
+  adocaoDeConfig,
   armazenamentoMigracao,
   CHAVE_COPIA_CONTA,
   CHAVE_SYNC_MIGRADO,
@@ -528,5 +529,56 @@ describe('sair, cancelar e outras abas', () => {
     expect(outraAbaMigrou(storage({ 'rendller:conta:v1': JSON.stringify(conta({ migradoEm: AGORA })) }))).toMatchObject({ origem: 'conta', migradoEm: AGORA });
     expect(outraAbaMigrou(storage({ 'rendller:conta:v1': JSON.stringify(conta()) }))).toBeNull();
     expect(outraAbaMigrou(storage())).toBeNull();
+  });
+});
+
+describe('várias abas', () => {
+  const cfgAntiga = () => JSON.stringify({ cred: credAleatoria(), versao: 1, impressao: '', ultimaSync: '' });
+  const contaCfg = (extra: Record<string, unknown> = {}) =>
+    ({ origem: 'conta', userId: 'u', email: 'a@b.c', chave: 'k', versao: 3, impressao: '', ultimaSync: '', ...extra }) as ConfigConta;
+
+  it('a aba B com o cofre antigo passa a usar a conta quando a aba A a ativa com erro passageiro', () => {
+    const syncV1 = cfgAntiga();
+    const antigaNaMemoria = lerConfigSalva(syncV1);
+    // aba A: migração com erro passageiro, conta ativa e sync:v1 intacto
+    const s = storage({ [CHAVE_SYNC_V1]: syncV1, 'rendller:conta:v1': JSON.stringify(contaCfg()) });
+    expect(configDaAba(antigaNaMemoria, s)).toMatchObject({ origem: 'conta', userId: 'u' });
+    expect(podeGravarCofreAntigo(s)).toBe(false);
+    expect(s.getItem(CHAVE_SYNC_V1)).toBe(syncV1); // a aba só deixa de usar; nada é apagado
+  });
+
+  it('a aba B não regrava sync:v1 depois de a aba A pausá-lo', () => {
+    const antigaNaMemoria = lerConfigSalva(cfgAntiga());
+    const s = storage({ [CHAVE_SYNC_PENDENTE]: cfgAntiga() });
+    expect(configDaAba(antigaNaMemoria, s)).toBeNull();
+    expect(podeGravarCofreAntigo(s)).toBe(false);
+  });
+
+  it('a aba que adota a conta recarrega os dados salvos e não envia nada por cima', () => {
+    // aba A escolheu "Cofre antigo": dados salvos e config da conta assinada com eles
+    const escolhidos = com('a', 'b');
+    const contaA = contaCfg({ migradoEm: AGORA, impressao: impressao(escolhidos) });
+    // aba B: escolha pendente, cofre antigo na memória e dados antigos
+    const antigosDeB = com('velho');
+    const d = adocaoDeConfig(lerConfigSalva(cfgAntiga()), contaA, antigosDeB, escolhidos);
+    expect(d).toEqual({ adotar: true, dados: escolhidos, guardarCopia: true });
+    // depois de adotar, o ciclo não envia: os dados recarregados batem com a assinatura da config
+    const plano = planejarCiclo({
+      versaoLocal: contaA.versao,
+      versaoRemota: contaA.versao,
+      temEnvelope: true,
+      impressaoConfig: contaA.impressao,
+      impressaoLocal: impressao(d.dados),
+      impressaoRemota: null,
+      aguardandoCofre: false,
+      podeGravar: true,
+    });
+    expect(plano.decisao).toBe('nada');
+    // mesma config (mesma conta): não recarrega nada
+    expect(adocaoDeConfig(contaA, { ...contaA, versao: 4 }, antigosDeB, escolhidos)).toEqual({ adotar: false, dados: antigosDeB, guardarCopia: false });
+    // dados iguais: adota sem cópia
+    expect(adocaoDeConfig(null, contaA, escolhidos, escolhidos)).toEqual({ adotar: true, dados: escolhidos, guardarCopia: false });
+    // sem config nova: nada a recarregar
+    expect(adocaoDeConfig(contaA, null, antigosDeB, escolhidos).adotar).toBe(false);
   });
 });
