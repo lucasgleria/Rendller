@@ -8,7 +8,10 @@ import {
   armazenamentoMigracao,
   concluirEscolha,
   configDaAba,
+  configParaAba,
   criarDepsMigracao,
+  depoisDeDesativar,
+  outraAbaMigrou,
   migrarParaConta,
   podeGravarCofreAntigo,
   recusaCofreAntigo,
@@ -113,6 +116,8 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, c
   const [erro, setErro] = useState<string | null>(null);
   const [precisaEntrar, setPrecisaEntrar] = useState(false);
   const [conflito, setConflito] = useState<Conflito | null>(null);
+  /** Escolha de versão da migração; enquanto existir, a sincronização fica pausada (e o cartão mostra isso). */
+  const [escolha, setEscolha] = useState<Extract<ResultadoMigracao, { tipo: 'escolha-pendente' }> | null>(null);
 
   const configRef = useRef(config);
   const dadosRef = useRef(dados);
@@ -135,18 +140,30 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, c
 
   /** Relê a config do `localStorage` (outra aba pode ter migrado). Devolve false se não há o que sincronizar. */
   const revalidar = useCallback((): boolean => {
-    const atual = configDaAba(configRef.current, localStorage);
+    // sem config, adota a que estiver salva agora (ex.: outra aba ativou a conta)
+    const atual = configParaAba(configRef.current, localStorage);
     if (atual !== configRef.current) {
       configRef.current = atual;
       setConfigEstado(atual);
-      if (!atual) setStatus('desligado');
+      setStatus(atual ? 'sincronizando' : 'desligado');
     }
     return !!atual;
   }, []);
 
   useEffect(() => {
     const aoMudar = (e: StorageEvent) => {
-      if (e.key === null || e.key === CHAVE_CONFIG || e.key === CHAVE_CONTA || e.key?.startsWith(CHAVE_CONFIG)) revalidar();
+      if (!(e.key === null || e.key === CHAVE_CONFIG || e.key === CHAVE_CONTA || e.key?.startsWith(CHAVE_CONFIG))) return;
+      // outra aba concluiu a migração: a escolha pendente aqui perde o sentido; adota a conta
+      const migrada = migracao.current ? outraAbaMigrou(localStorage) : null;
+      if (migrada) {
+        migracao.current = null;
+        setEscolha(null);
+        configRef.current = migrada;
+        setConfigEstado(migrada);
+        setStatus('sincronizando');
+        return;
+      }
+      revalidar();
     };
     window.addEventListener('storage', aoMudar);
     return () => window.removeEventListener('storage', aoMudar);
@@ -235,6 +252,8 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, c
     if (!configRef.current || conflitoRef.current || migracao.current) return Promise.resolve();
     return enfileirar(() => ciclo().catch(falhou));
   }, [ciclo, enfileirar, falhou]);
+  const sincronizarRef = useRef(sincronizar);
+  sincronizarRef.current = sincronizar;
 
   // Alteração local → envia depois de uma pausa nas edições.
   useEffect(() => {
@@ -300,6 +319,7 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, c
       enfileirar(async () => {
         const r = await migrarParaConta(deps, agora);
         migracao.current = r.tipo === 'escolha-pendente' ? { deps, manterCofreAntigo: r.manterCofreAntigo } : null;
+        setEscolha(r.tipo === 'escolha-pendente' ? r : null);
         return r;
       }),
     [enfileirar],
@@ -357,12 +377,22 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, c
       if (!m) return Promise.resolve({ tipo: 'falhou', erro: 'A migração não está mais em andamento; entre na conta de novo.' });
       return enfileirar(async () => {
         const r = await concluirEscolha(m.deps, escolhido, new Date().toISOString(), m.manterCofreAntigo);
-        if (r.tipo !== 'falhou') migracao.current = null;
+        if (r.tipo !== 'falhou') {
+          migracao.current = null;
+          setEscolha(null);
+        }
         return r;
       });
     },
     [enfileirar],
   );
+
+  /** Cancela a escolha pendente: nada é gravado e a sincronização volta. */
+  const cancelarEscolha = useCallback(() => {
+    migracao.current = null;
+    setEscolha(null);
+    void sincronizarRef.current?.();
+  }, []);
 
   /** Segundo passo: `nuvem` traz os dados da nuvem para cá; `local` envia os daqui para a nuvem. */
   const concluir = useCallback(
@@ -416,14 +446,16 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, c
 
   /** Para de sincronizar neste aparelho; apaga só a config ativa (a outra, se existir, fica intacta). */
   const desativar = useCallback(() => {
-    const origem = configRef.current?.origem;
-    salvarConfig(null, origem);
-    const outra = lerConfig(); // a outra config, se houver, passa a valer
-    if (outra) salvarConfig(outra);
+    const ativa = configRef.current;
+    const d = depoisDeDesativar(ativa, localStorage);
+    salvarConfig(null, ativa?.origem);
+    // migração incompleta: o cofre antigo fica guardado, mas não volta a sincronizar sozinho
+    if (d.pausarCofreAntigo) armazenamentoMigracao(localStorage).pausarCofreAntigo();
+    if (d.proxima) salvarConfig(d.proxima);
     setConflito(null);
-    setErro(null);
+    setErro(d.aviso);
     setPrecisaEntrar(false);
-    setStatus(outra ? 'sincronizando' : 'desligado');
+    setStatus(d.proxima ? 'sincronizando' : 'desligado');
   }, [salvarConfig]);
 
   /** Sai da conta neste aparelho: encerra a sessão e para de sincronizar pela conta. Os dados locais ficam. */
@@ -458,6 +490,8 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, c
       userId: config?.origem === 'conta' ? config.userId : '',
       cofreAntigoAtivo: !!configAntiga(),
       cofreAntigoArquivado: armazenamentoMigracao(localStorage).cofreAntigoArquivado(),
+      migracaoPendente: armazenamentoMigracao(localStorage).migracaoPendente(),
+      escolha,
       status,
       erro,
       precisaEntrar,
@@ -467,6 +501,7 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, c
     preparar,
     migrarConta,
     repetirMigracao,
+    cancelarEscolha,
     concluirEscolhaConta,
     concluir,
     resolverConflito,

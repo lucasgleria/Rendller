@@ -14,8 +14,13 @@ import {
   CHAVE_SYNC_MIGRADO,
   CHAVE_SYNC_V1,
   concluirEscolha,
+  CHAVE_SYNC_PENDENTE,
+  configCofreAntigoSalva,
   configDaAba,
+  configParaAba,
   criarDepsMigracao,
+  depoisDeDesativar,
+  outraAbaMigrou,
   lerCofreAntigoCom,
   migrarParaConta,
   nomeBackup,
@@ -84,8 +89,8 @@ function aparelho(o: { local: Dados; cred?: Credenciais; banco: BancoFalso; uid:
     lerNavegador: () => (ordem.push('lerNavegador'), estado.local),
     lerCofreAntigo: async () => {
       ordem.push('lerCofreAntigo');
-      const c = lerConfigSalva(s.getItem(CHAVE_SYNC_V1));
-      return c && c.origem === 'cofre-antigo' ? lerCofreAntigoCom(c.cred, estado.local) : null;
+      const c = configCofreAntigoSalva(s);
+      return c ? lerCofreAntigoCom(c.cred, estado.local) : null;
     },
     conta,
     cifraConta: async () => contaReal,
@@ -475,5 +480,53 @@ describe('aparelho já migrado', () => {
       },
     };
     expect(() => armazenamentoMigracao(cheio).guardarCopia(com('x'), 'navegador', AGORA)).toThrow();
+  });
+});
+
+describe('sair, cancelar e outras abas', () => {
+  const cfgAntiga = () => JSON.stringify({ cred: credAleatoria(), versao: 1, impressao: '', ultimaSync: '' });
+  const conta = (extra: Record<string, unknown> = {}) =>
+    ({ origem: 'conta', userId: 'u', email: 'a@b.c', chave: 'k', versao: 1, impressao: '', ultimaSync: '', ...extra }) as ConfigConta;
+
+  it('sair da conta com a migração incompleta não reativa o cofre antigo', () => {
+    const s = storage({ [CHAVE_SYNC_V1]: cfgAntiga() });
+    const d = depoisDeDesativar(conta(), s);
+    expect(d).toEqual({ proxima: null, pausarCofreAntigo: true, aviso: 'Migração para a conta incompleta; entre de novo para concluir' });
+    // efeito: a config do cofre antigo fica guardada, mas não liga sozinha (nem ao recarregar)
+    armazenamentoMigracao(s).pausarCofreAntigo();
+    expect(s.getItem(CHAVE_SYNC_V1)).toBeNull();
+    expect(s.getItem(CHAVE_SYNC_PENDENTE)).not.toBeNull();
+    expect(configParaAba(null, s)).toBeNull();
+    expect(recusaCofreAntigo(s)).toBe('Migração para a conta incompleta; entre de novo para concluir');
+    // migração completa: só desliga
+    expect(depoisDeDesativar(conta({ migradoEm: AGORA }), storage())).toEqual({ proxima: null, pausarCofreAntigo: false, aviso: null });
+    // saindo do cofre antigo com a conta presente: a conta passa a valer
+    const comConta = storage({ 'rendller:conta:v1': JSON.stringify(conta()) });
+    expect(depoisDeDesativar(lerConfigSalva(cfgAntiga()), comConta).proxima).toMatchObject({ origem: 'conta' });
+  });
+
+  it('nova tentativa lê o cofre antigo pausado e o arquiva ao concluir', async () => {
+    const cred = credAleatoria();
+    await noCofreAntigo(cred, com('a'));
+    const s = storage({ [CHAVE_SYNC_PENDENTE]: JSON.stringify({ cred, versao: 1, impressao: '', ultimaSync: '' }) });
+    const ap = aparelho({ local: com('a'), banco: new BancoFalso(), uid: novoUid(), s });
+    const r = await migrarParaConta(ap.deps, AGORA);
+    expect(r).toMatchObject({ tipo: 'concluida', contagens: { 'cofre-antigo': 1 } });
+    expect(s.getItem(CHAVE_SYNC_PENDENTE)).toBeNull();
+    expect(s.getItem(CHAVE_SYNC_MIGRADO)).not.toBeNull();
+  });
+
+  it('a aba sem sincronização liga a conta quando ela aparece', () => {
+    expect(configParaAba(null, storage())).toBeNull();
+    expect(configParaAba(null, storage({ 'rendller:conta:v1': JSON.stringify(conta()) }))).toMatchObject({ origem: 'conta', userId: 'u' });
+    expect(configParaAba(null, storage({ [CHAVE_SYNC_V1]: cfgAntiga() }))).toMatchObject({ origem: 'cofre-antigo' });
+    const atual = lerConfigSalva(cfgAntiga());
+    expect(configParaAba(atual, storage({ [CHAVE_SYNC_V1]: '{}' }))).toBe(atual);
+  });
+
+  it('outra aba concluiu a migração: esta aba adota a conta', () => {
+    expect(outraAbaMigrou(storage({ 'rendller:conta:v1': JSON.stringify(conta({ migradoEm: AGORA })) }))).toMatchObject({ origem: 'conta', migradoEm: AGORA });
+    expect(outraAbaMigrou(storage({ 'rendller:conta:v1': JSON.stringify(conta()) }))).toBeNull();
+    expect(outraAbaMigrou(storage())).toBeNull();
   });
 });
