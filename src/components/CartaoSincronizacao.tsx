@@ -4,7 +4,7 @@ import { contaDisponivel } from '../conta';
 import type { ResultadoMigracao } from '../migracaoConta';
 import { contaConfere } from '../sincronizacaoNucleo';
 import { EntrarNaConta } from './ContaForms';
-import { ResumoMigracao, SecaoConta } from './MigracaoConta';
+import { EscolhaMigracao, ResumoMigracao, SecaoConta } from './MigracaoConta';
 import type { Dados } from '../domain/types';
 import { data } from '../formato';
 import type { Preparacao, Sincronizacao, StatusSync } from '../sincronizacao';
@@ -82,6 +82,7 @@ export default function CartaoSincronizacao({ s, dados }: { s: Sincronizacao; da
 
       {sync.erro && <div className={`aviso ${sync.status === 'offline' ? 'amarelo' : 'vermelho'}`}>{sync.erro}</div>}
       {aviso && <div className="aviso vermelho">{aviso}</div>}
+      <EscolhaMigracao s={s} aoConcluir={setResumo} />
 
       {sync.ativo ? (
         <>
@@ -109,7 +110,7 @@ export default function CartaoSincronizacao({ s, dados }: { s: Sincronizacao; da
             </p>
           ) : null}
           {sync.origem === 'cofre-antigo' && comConta ? <SecaoConta s={s} aoConcluir={setResumo} /> : null}
-          {sync.origem === 'conta' && sync.cofreAntigoAtivo ? <SecaoConta s={s} aoConcluir={setResumo} repetir /> : null}
+          {sync.origem === 'conta' && (sync.cofreAntigoAtivo || sync.migracaoPendente) && !sync.escolha ? <SecaoConta s={s} aoConcluir={setResumo} repetir /> : null}
           {sync.conflito && (
             <div className="aviso amarelo">
               Este aparelho e a nuvem foram alterados ao mesmo tempo. Nuvem: {aportes(sync.conflito.remoto.aportes.length)}
@@ -201,8 +202,13 @@ export default function CartaoSincronizacao({ s, dados }: { s: Sincronizacao; da
         )
       ) : (
         <>
-          {comConta ? <SecaoConta s={s} aoConcluir={setResumo} /> : null}
-          {sync.cofreAntigoArquivado ? (
+          {comConta && !sync.escolha ? <SecaoConta s={s} aoConcluir={setResumo} /> : null}
+          {sync.migracaoPendente ? (
+            // migração incompleta: o cofre antigo só volta pela nova tentativa, entrando na conta
+            <p className="mut" style={{ fontSize: 13 }}>
+              Migração para a conta incompleta; entre de novo para concluir. A config do cofre antigo continua guardada para a nova tentativa.
+            </p>
+          ) : sync.cofreAntigoArquivado ? (
             // aparelho já migrado não volta ao cofre antigo (o hook também recusa)
             <p className="mut" style={{ fontSize: 13 }}>
               Este aparelho já migrou para a conta: entre com a conta para voltar a sincronizar. Cofre antigo mantido (não sincroniza mais neste aparelho).

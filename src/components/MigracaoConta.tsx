@@ -43,7 +43,6 @@ export function SecaoConta({
   const [frase, setFrase] = useState('');
   const [ocupado, setOcupado] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
-  const [escolha, setEscolha] = useState<Extract<ResultadoMigracao, { tipo: 'escolha-pendente' }> | null>(null);
 
   // sessão já salva neste navegador: pula o e-mail e a senha (só carrega o Supabase se houver)
   useEffect(() => {
@@ -59,12 +58,10 @@ export function SecaoConta({
 
   const tratar = (r: ResultadoMigracao) => {
     if (r.tipo === 'falhou') setAviso(r.erro);
-    else if (r.tipo === 'escolha-pendente') setEscolha(r);
-    else {
+    else if (r.tipo === 'concluida') {
       setFrase('');
-      setEscolha(null);
       aoConcluir(r);
-    }
+    } // escolha pendente: o hook guarda e o cartão mostra (EscolhaMigracao)
   };
 
   const migrar = () => {
@@ -84,14 +81,7 @@ export function SecaoConta({
       .finally(() => setOcupado(false));
   };
 
-  const escolher = (c: Candidato) => {
-    setOcupado(true);
-    s.concluirEscolhaConta(c)
-      .then((r) => tratar(r.tipo === 'concluida' ? { ...r, backup: escolha?.backup ?? null, contagens: escolha?.contagens ?? null } : r))
-      .finally(() => setOcupado(false));
-  };
-
-  if (repetir && !escolha) {
+  if (repetir) {
     return (
       <div style={{ marginBottom: 16 }}>
         <div className="aviso amarelo">{AVISO_COFRE_ANTIGO_PASSAGEIRO}.</div>
@@ -112,21 +102,7 @@ export function SecaoConta({
       {sync.cofreAntigoAtivo ? <div className="aviso amarelo">{AVISO_MIGRAR_TODOS}</div> : null}
       {aviso ? <div className="aviso vermelho">{aviso}</div> : null}
 
-      {escolha ? (
-        <>
-          <div className="aviso amarelo">
-            Há versões diferentes dos seus dados. Escolha qual fica na conta e neste aparelho; as outras não são misturadas, e a substituída fica guardada como
-            cópia local. Backup salvo como {escolha.backup}.
-          </div>
-          <div className="acoes">
-            {escolha.candidatos.map((c) => (
-              <button key={c.origem} className="btn" disabled={ocupado} onClick={() => escolher(c)}>
-                Usar: {ROTULO_ORIGEM[c.origem]} ({aportes(c.aportes)})
-              </button>
-            ))}
-          </div>
-        </>
-      ) : sessao ? (
+      {sessao ? (
         <>
           <p style={{ margin: '4px 0 8px' }}>
             Conta: <b>{sessao.email}</b>. Agora a frase-senha que cifra a carteira:
@@ -156,6 +132,46 @@ export function SecaoConta({
       ) : (
         <EntrarNaConta aoEntrar={setSessao} />
       )}
+    </div>
+  );
+}
+
+/**
+ * Escolha de versão da migração, mostrada no cartão enquanto estiver pendente (a sincronização fica pausada).
+ * "Cancelar" não grava nada e retoma a sincronização.
+ */
+export function EscolhaMigracao({ s, aoConcluir }: { s: Sincronizacao; aoConcluir: (r: Extract<ResultadoMigracao, { tipo: 'concluida' }>) => void }) {
+  const escolha = s.sync.escolha;
+  const [ocupado, setOcupado] = useState(false);
+  const [aviso, setAviso] = useState<string | null>(null);
+  if (!escolha) return null;
+
+  const escolher = (c: Candidato) => {
+    setOcupado(true);
+    setAviso(null);
+    s.concluirEscolhaConta(c)
+      .then((r) => {
+        if (r.tipo === 'falhou') setAviso(r.erro);
+        else if (r.tipo === 'concluida') aoConcluir({ ...r, backup: escolha.backup, contagens: escolha.contagens, avisos: escolha.avisos });
+      })
+      .finally(() => setOcupado(false));
+  };
+
+  return (
+    <div className="aviso amarelo">
+      <b>Sincronização pausada: escolha pendente.</b> Há versões diferentes dos seus dados. Escolha qual fica na conta e neste aparelho; as outras não são
+      misturadas, e a substituída fica guardada como cópia local. Backup salvo como {escolha.backup}.
+      {aviso ? <div className="aviso vermelho">{aviso}</div> : null}
+      <div className="acoes" style={{ marginTop: 8 }}>
+        {escolha.candidatos.map((c) => (
+          <button key={c.origem} className="btn" disabled={ocupado} onClick={() => escolher(c)}>
+            Usar: {ROTULO_ORIGEM[c.origem]} ({aportes(c.aportes)})
+          </button>
+        ))}
+        <button className="btn" disabled={ocupado} onClick={() => s.cancelarEscolha()}>
+          Cancelar
+        </button>
+      </div>
     </div>
   );
 }

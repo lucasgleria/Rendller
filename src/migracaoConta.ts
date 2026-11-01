@@ -4,7 +4,7 @@ import { impressao } from './domain/impressao';
 import { daNuvem, paraNuvem } from './domain/sincronia';
 import type { Dados } from './domain/types';
 import { SessaoExpirada, type Cifra, type Remoto, type RespostaRemota } from './remoto';
-import { CHAVE_CONTA, lerContaSalva, MENSAGEM_FRASE_DIFERENTE, type ConfigSync } from './sincronizacaoNucleo';
+import { CHAVE_CONTA, escolherConfig, lerConfigSalva, lerContaSalva, MENSAGEM_FRASE_DIFERENTE, type ConfigSync } from './sincronizacaoNucleo';
 
 /**
  * Migração para a conta (ADR-0004), feita no navegador: junta navegador, cofre antigo e conta, baixa um backup
@@ -14,6 +14,11 @@ import { CHAVE_CONTA, lerContaSalva, MENSAGEM_FRASE_DIFERENTE, type ConfigSync }
 export const CHAVE_SYNC_V1 = 'rendller:sync:v1';
 /** A config do cofre antigo vai para cá depois da migração: nada é apagado, mas ela não sincroniza mais. */
 export const CHAVE_SYNC_MIGRADO = 'rendller:sync:v1:migrado';
+/**
+ * Migração incompleta (cofre antigo não lido) e o usuário saiu da conta: a config do cofre antigo fica aqui,
+ * guardada para a nova tentativa, mas não sincroniza sozinha.
+ */
+export const CHAVE_SYNC_PENDENTE = 'rendller:sync:v1:migracao-pendente';
 /** Versões substituídas durante a migração (o navegador antes de receber dados, ou a conta antes de ser sobrescrita). */
 export const CHAVE_COPIA_CONTA = 'rendller:copia-antes-da-conta';
 
@@ -26,6 +31,7 @@ export const AVISO_COFRE_ANTIGO_PASSAGEIRO = 'Não consegui ler o cofre antigo; 
 export const AVISO_COFRE_ANTIGO_SEM_ACESSO =
   'O cofre antigo recusou o acesso (apagado ou sem permissão); ele foi arquivado neste aparelho, sem apagar nada.';
 export const MENSAGEM_JA_MIGROU = 'Este aparelho já migrou para a conta';
+export const MENSAGEM_MIGRACAO_INCOMPLETA = 'Migração para a conta incompleta; entre de novo para concluir';
 
 export type ConfigConta = Extract<ConfigSync, { origem: 'conta' }>;
 
@@ -39,7 +45,44 @@ export class CofreAntigoSemAcesso extends Error {
 
 /** O cofre antigo não pode ser ativado de novo num aparelho que já migrou para a conta. */
 export function recusaCofreAntigo(s: Pick<Storage, 'getItem'>): string | null {
-  return s.getItem(CHAVE_SYNC_MIGRADO) != null ? MENSAGEM_JA_MIGROU : null;
+  if (s.getItem(CHAVE_SYNC_MIGRADO) != null) return MENSAGEM_JA_MIGROU;
+  return s.getItem(CHAVE_SYNC_PENDENTE) != null ? MENSAGEM_MIGRACAO_INCOMPLETA : null;
+}
+
+/** Config do cofre antigo a ler na migração: a ativa ou a guardada de uma migração incompleta. */
+export function configCofreAntigoSalva(s: Pick<Storage, 'getItem'>): Extract<ConfigSync, { origem: 'cofre-antigo' }> | null {
+  const c = lerConfigSalva(s.getItem(CHAVE_SYNC_V1) ?? s.getItem(CHAVE_SYNC_PENDENTE));
+  return c?.origem === 'cofre-antigo' ? c : null;
+}
+
+/**
+ * Config desta aba: a atual relida (ver `configDaAba`) ou, sem nenhuma, a que estiver salva agora (a conta tem
+ * prioridade). Assim uma aba que ficou sem sincronização liga a conta quando outra aba a ativa.
+ */
+export function configParaAba(atual: ConfigSync | null, s: Pick<Storage, 'getItem'>): ConfigSync | null {
+  if (atual) return configDaAba(atual, s);
+  return escolherConfig(configDaAba(lerConfigSalva(s.getItem(CHAVE_SYNC_V1)), s), lerContaSalva(s.getItem(CHAVE_CONTA)));
+}
+
+/** Outra aba concluiu a migração? Devolve a config da conta (com `migradoEm`) para esta aba adotar. */
+export function outraAbaMigrou(s: Pick<Storage, 'getItem'>): ConfigConta | null {
+  const c = lerContaSalva(s.getItem(CHAVE_CONTA));
+  return c?.origem === 'conta' && c.migradoEm ? c : null;
+}
+
+/**
+ * O que fazer ao desativar a config `ativa` neste aparelho. Saindo da conta com a migração incompleta (cofre antigo
+ * ainda guardado, sem `migradoEm`), nada volta a sincronizar: o cofre antigo é pausado e o usuário é avisado.
+ */
+export function depoisDeDesativar(
+  ativa: ConfigSync | null,
+  s: Pick<Storage, 'getItem'>,
+): { proxima: ConfigSync | null; pausarCofreAntigo: boolean; aviso: string | null } {
+  if (ativa?.origem === 'conta') {
+    const incompleta = !ativa.migradoEm && (s.getItem(CHAVE_SYNC_V1) != null || s.getItem(CHAVE_SYNC_PENDENTE) != null);
+    return incompleta ? { proxima: null, pausarCofreAntigo: true, aviso: MENSAGEM_MIGRACAO_INCOMPLETA } : { proxima: null, pausarCofreAntigo: false, aviso: null };
+  }
+  return { proxima: lerContaSalva(s.getItem(CHAVE_CONTA)), pausarCofreAntigo: false, aviso: null };
 }
 
 /** `rendller:sync:v1` nunca é regravado depois do arquivamento (uma aba antiga não desarquiva o cofre). */
@@ -116,11 +159,20 @@ export function armazenamentoMigracao(s: Pick<Storage, 'getItem' | 'setItem' | '
       s.setItem(CHAVE_COPIA_CONTA, JSON.stringify({ versoes: todas }));
     },
     arquivarCofreAntigo() {
-      const atual = s.getItem(CHAVE_SYNC_V1);
+      const atual = s.getItem(CHAVE_SYNC_V1) ?? s.getItem(CHAVE_SYNC_PENDENTE);
       if (atual == null) return;
       s.setItem(CHAVE_SYNC_MIGRADO, atual);
       s.removeItem(CHAVE_SYNC_V1);
+      s.removeItem(CHAVE_SYNC_PENDENTE);
     },
+    /** Migração incompleta e saída da conta: guarda a config do cofre antigo sem deixá-la sincronizar. */
+    pausarCofreAntigo() {
+      const atual = s.getItem(CHAVE_SYNC_V1);
+      if (atual == null) return;
+      s.setItem(CHAVE_SYNC_PENDENTE, atual);
+      s.removeItem(CHAVE_SYNC_V1);
+    },
+    migracaoPendente: () => s.getItem(CHAVE_SYNC_PENDENTE) != null,
     cofreAntigoArquivado: () => s.getItem(CHAVE_SYNC_MIGRADO) != null,
   };
 }
@@ -267,10 +319,9 @@ export function criarDepsMigracao(f: FontesMigracao): DepsMigracao {
   return {
     lerNavegador: () => f.lerDados(),
     lerCofreAntigo: async () => {
-      if (recusaCofreAntigo(s)) return null;
-      const c = s.getItem(CHAVE_SYNC_V1);
-      const cfg = c ? (JSON.parse(c) as { cred?: Credenciais }) : null;
-      return cfg?.cred?.id ? lerAntigo(cfg.cred, f.lerDados()) : null;
+      if (s.getItem(CHAVE_SYNC_MIGRADO) != null) return null; // já migrado
+      const c = configCofreAntigoSalva(s); // ativo ou guardado de uma migração incompleta
+      return c ? lerAntigo(c.cred, f.lerDados()) : null;
     },
     conta: conta.remoto,
     cifraConta: () => conta.cifra,
