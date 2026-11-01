@@ -42,8 +42,8 @@ Antes de dizer que uma mudança está pronta, rode `npm test` e `npm run build`.
 | `src/remoto.ts`, `src/remoto.contrato.ts` | Interfaces `Remoto` e `Cifra` do cofre de sincronização; contrato de teste compartilhado (só testes importam) |
 | `src/conta.ts` | Conta no Supabase: cliente carregado sob demanda (`import()` único), entrar, sair, esqueci a senha, nova senha, e o cofre da conta como `Remoto` (`remotoDaConta` sobre `ClienteCofre`) |
 | `src/conta.falso.ts` | `ClienteCofre` falso com a semântica do SQL (só testes importam) |
-| `src/sincronizacaoNucleo.ts` | Núcleo sem React: configs (`rendller:sync:v1` cofre antigo, `rendller:conta:v1` conta), ciclo, ativação e classificação de falhas |
-| `src/migracaoConta.ts` | Migração para a conta (efeitos injetáveis, `criarDepsMigracao`): backup no clique, leitura de navegador, cofre antigo e conta, escolha sem fusão, cópias, arquivamento e pausa do cofre antigo, decisões de aba (`configParaAba`, `depoisDeDesativar`) |
+| `src/sincronizacaoNucleo.ts` | Núcleo sem React: configs (`rendller:sync:v1` cofre antigo, `rendller:conta:v1` conta, com `migradoEm` quando a migração terminou), ciclo, ativação e classificação de falhas |
+| `src/migracaoConta.ts` | Migração para a conta (efeitos injetáveis, `criarDepsMigracao`): backup no clique, leitura de navegador, cofre antigo e conta, escolha sem fusão, decisões de aba (`configParaAba`, `depoisDeDesativar`, `adocaoDeConfig`). Chaves: `rendller:sync:v1:migrado` (cofre antigo arquivado após a migração), `rendller:sync:v1:migracao-pendente` (cofre antigo guardado ao sair da conta com a migração incompleta), `rendller:copia-antes-da-conta` (até 3 versões substituídas), `rendller:conta:v1` (config da conta) |
 | `src/cofre.memoria.ts` | Armazém em memória do cofre antigo (só testes importam) |
 | `src/sincronizacao.ts` | Hook de sincronização (só efeitos: fila, estado, timers) sobre `Remoto & Cifra`; decisões puras em `domain/sincronia.ts` (`planejarCiclo`, `decidirCiclo`) |
 | `supabase/migrations/`, `supabase/verificacao.sql`, `supabase/README.md` | Tabela `cofres` com RLS, trigger de versão, `gravar_cofre()` e `ping()`; verificação manual com asserções; roteiro de configuração do Supabase e do Netlify ([supabase/README.md](supabase/README.md)) |
@@ -53,7 +53,7 @@ Antes de dizer que uma mudança está pronta, rode `npm test` e `npm run build`.
 | `src/components/campos.tsx` | Campos de formulário (números pt-BR, percentuais com `escala={100}`) |
 | `src/components/CartaoSincronizacao.tsx`, `ContaForms.tsx`, `MigracaoConta.tsx` | Cartão de sincronização: cofre antigo, entrar com conta, nova senha, migração e escolha de versão |
 | `.github/workflows/ci.yml` | Testes e build a cada push (não precisa das variáveis do Supabase) |
-| `.github/workflows/manter-supabase.yml` | Consulta leve (`ping()`) a cada 3 dias para o projeto Supabase Free não pausar; secrets `SUPABASE_URL` e `SUPABASE_PUBLISHABLE_KEY` |
+| `.github/workflows/manter-supabase.yml` | Consulta leve (`ping()`) a cada 3 dias para o projeto Supabase Free não pausar; secrets `SUPABASE_URL` e `SUPABASE_PUBLISHABLE_KEY`; o agendamento só vale no branch padrão do GitHub |
 | `src/formato.ts` | Formatação BRL, %, datas `dd/mm/aaaa` |
 
 Regras de arquitetura:

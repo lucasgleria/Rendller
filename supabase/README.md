@@ -46,7 +46,15 @@ O SMTP padrão manda poucos e-mails por hora e só para membros da equipe do pro
 2. No Netlify, em **Site configuration → Environment variables**, crie `VITE_SUPABASE_URL` e `VITE_SUPABASE_PUBLISHABLE_KEY` e faça um novo deploy.
 3. Para desenvolver, copie `.env.example` para `.env.local` (que não é commitado), preencha e rode `npm run dev`.
 
-## 6. Conferência
+## 6. Manter o projeto ativo
+
+O plano Free pausa o projeto depois de 7 dias de pouca atividade. O workflow `.github/workflows/manter-supabase.yml` chama `ping()` a cada 3 dias:
+1. No GitHub, em **Settings → Secrets and variables → Actions**, cadastre `SUPABASE_URL` e `SUPABASE_PUBLISHABLE_KEY`, com os mesmos valores do passo 5.
+2. Rode o workflow uma vez por **Actions → Manter o Supabase ativo → Run workflow** e confira a resposta `1` no log.
+
+O agendamento **só vale a partir do branch padrão do repositório**. Enquanto o workflow estiver só no branch `feat/conta-e-classes`, ele não roda sozinho. O GitHub também desativa workflows agendados de repositórios sem atividade por 60 dias.
+
+## 7. Conferência
 
 Faça a conferência em **perfis de navegador limpos**, sem dados nem sincronização antiga:
 1. Entre com a conta e digite uma frase-senha.

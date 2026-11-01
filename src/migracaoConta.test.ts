@@ -561,7 +561,7 @@ describe('várias abas', () => {
     // aba B: escolha pendente, cofre antigo na memória e dados antigos
     const antigosDeB = com('velho');
     const d = adocaoDeConfig(lerConfigSalva(cfgAntiga()), contaA, antigosDeB, escolhidos);
-    expect(d).toEqual({ adotar: true, dados: escolhidos, guardarCopia: true });
+    expect(d).toEqual({ adotar: true, dados: escolhidos, guardarCopia: true, travar: false });
     // depois de adotar, o ciclo não envia: os dados recarregados batem com a assinatura da config
     const plano = planejarCiclo({
       versaoLocal: contaA.versao,
@@ -575,10 +575,62 @@ describe('várias abas', () => {
     });
     expect(plano.decisao).toBe('nada');
     // mesma config (mesma conta): não recarrega nada
-    expect(adocaoDeConfig(contaA, { ...contaA, versao: 4 }, antigosDeB, escolhidos)).toEqual({ adotar: false, dados: antigosDeB, guardarCopia: false });
+    expect(adocaoDeConfig(contaA, { ...contaA, versao: 4 }, antigosDeB, escolhidos)).toEqual({ adotar: false, dados: antigosDeB, guardarCopia: false, travar: false });
     // dados iguais: adota sem cópia
-    expect(adocaoDeConfig(null, contaA, escolhidos, escolhidos)).toEqual({ adotar: true, dados: escolhidos, guardarCopia: false });
+    expect(adocaoDeConfig(null, contaA, escolhidos, escolhidos)).toEqual({ adotar: true, dados: escolhidos, guardarCopia: false, travar: false });
     // sem config nova: nada a recarregar
     expect(adocaoDeConfig(contaA, null, antigosDeB, escolhidos).adotar).toBe(false);
+  });
+});
+
+describe('corrida entre a config da conta e os dados salvos', () => {
+  it('a aba B adota a conta antes de dados:v2 ser atualizado: nunca envia, lê a nuvem e trata como conflito', () => {
+    // aba A concluiu com "Cofre antigo": a config da conta já assina os dados escolhidos...
+    const escolhidos = com('a', 'b');
+    const contaA = { origem: 'conta', userId: 'u', email: 'a@b.c', chave: 'k', versao: 2, impressao: impressao(escolhidos), ultimaSync: '', migradoEm: AGORA } as ConfigConta;
+    // ...mas dados:v2 ainda tem a versão antiga quando a aba B recarrega
+    const antigosSalvos = com('velho');
+    const d = adocaoDeConfig(lerConfigSalva(JSON.stringify({ cred: credAleatoria(), versao: 1, impressao: '', ultimaSync: '' })), contaA, antigosSalvos, antigosSalvos);
+    expect(d).toMatchObject({ adotar: true, travar: true });
+    const base = {
+      versaoLocal: contaA.versao,
+      versaoRemota: contaA.versao,
+      temEnvelope: true,
+      impressaoConfig: contaA.impressao,
+      impressaoLocal: impressao(d.dados),
+      aguardandoCofre: d.travar,
+    };
+    // sem a trava seria "enviar" (dados locais diferentes da assinatura)
+    expect(planejarCiclo({ ...base, aguardandoCofre: false, impressaoRemota: null, podeGravar: true }).decisao).toBe('enviar');
+    // com a trava: primeiro precisa ler a nuvem; depois, aplicar ou conflito, nunca enviar
+    expect(planejarCiclo({ ...base, impressaoRemota: null, podeGravar: true })).toMatchObject({ precisaRemoto: true, decisao: 'nada' });
+    expect(planejarCiclo({ ...base, impressaoRemota: impressao(escolhidos), podeGravar: true }).decisao).toBe('conflito');
+    expect(planejarCiclo({ ...base, impressaoRemota: impressao(escolhidos), podeGravar: false }).decisao).toBe('aplicar');
+  });
+
+  it('a migração grava dados:v2 antes da config da conta', async () => {
+    const banco = new BancoFalso();
+    const uid = novoUid();
+    const chave = { id: uid, chave: credAleatoria().chave };
+    const outro = remotoDaConta(clienteFalso(banco, () => uid), chave);
+    await outro.gravar(0, await outro.cifrar(paraNuvem(com('c'))));
+    const s = storage();
+    const ordem: string[] = [];
+    let local = com();
+    const deps = criarDepsMigracao({
+      agora: AGORA,
+      armazenamento: s,
+      lerDados: () => local,
+      baixarArquivo: () => undefined,
+      abrirConta: () => ({ remoto: outro, cifra: Promise.resolve(outro), identidade: Promise.resolve({ userId: uid, email: 'a@b.c', chave: chave.chave }) }),
+      aplicarLocal: (d) => {
+        ordem.push(s.getItem('rendller:dados:v2') ? 'dados-gravados' : 'dados-ausentes');
+        local = d;
+      },
+      aoMigrar: () => ordem.push(s.getItem('rendller:dados:v2') ? 'config-depois-dos-dados' : 'config-sem-dados'),
+    });
+    expect(await migrarParaConta(deps, AGORA)).toMatchObject({ tipo: 'concluida', plano: { acao: 'baixar' } });
+    expect(ordem).toEqual(['dados-gravados', 'config-depois-dos-dados']);
+    expect(JSON.parse(s.getItem('rendller:dados:v2')!).aportes.map((a: { id: string }) => a.id)).toEqual(['c']);
   });
 });
