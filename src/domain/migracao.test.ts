@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { avaliar } from './calculo';
 import { APORTES_CARTEIRA_REAL, HOJE_CARTEIRA_REAL, LIQUIDO_HOJE_CARTEIRA_REAL, LIQUIDO_VENCIMENTO_CARTEIRA_REAL } from './carteiraReal.fixture';
 import { Calendario } from './datas';
-import { classeDoTipoV1, migrarDados } from './migracao';
+import { classeDoTipoV1, migrarDados, planejarMigracao } from './migracao';
+import type { Dados } from './types';
 import { normalizarParametros, novoAporte, parametrosPadrao } from './padroes';
 
 /** Parâmetros como eram gravados na versão 1 (sem `regimes`). */
@@ -179,5 +180,82 @@ describe('regimes salvos (normalizarParametros)', () => {
     }
     const cal = new Calendario(d.parametros.feriados);
     expect(Number.isFinite(avaliar(d.aportes[0], '2027-10-05', d.parametros, cal).liquido)).toBe(true);
+  });
+});
+
+describe('planejamento da migração para a conta', () => {
+  const com = (...ids: string[]): Dados => ({
+    versao: 2,
+    aportes: ids.map((id) => novoAporte({ id, emissor: 'Banco X', valor: 500, dataAporte: '2026-08-19', vencimento: '2028-08-10' })),
+    parametros: parametrosPadrao(),
+  });
+  const vazio = () => com();
+
+  it('navegador com aportes e conta vazia: enviar do navegador', () => {
+    expect(planejarMigracao(com('a'), null, null)).toEqual({ acao: 'enviar', dados: com('a'), origem: 'navegador' });
+    expect(planejarMigracao(com('a'), null, vazio())).toEqual({ acao: 'enviar', dados: com('a'), origem: 'navegador' });
+  });
+
+  it('navegador igual ao cofre antigo: um só candidato, enviar', () => {
+    const p = planejarMigracao(com('a', 'b'), com('a', 'b'), null);
+    expect(p).toMatchObject({ acao: 'enviar', dados: com('a', 'b') });
+  });
+
+  it('só o cofre antigo tem aportes: enviar do cofre antigo', () => {
+    expect(planejarMigracao(vazio(), com('x'), null)).toEqual({ acao: 'enviar', dados: com('x'), origem: 'cofre-antigo' });
+  });
+
+  it('navegador diferente do cofre antigo: escolher entre os dois (nunca funde)', () => {
+    const p = planejarMigracao(com('a'), com('b'), null);
+    expect(p.acao).toBe('escolher');
+    if (p.acao !== 'escolher') return;
+    expect(p.candidatos.map((c) => [c.origem, c.aportes])).toEqual([
+      ['navegador', 1],
+      ['cofre-antigo', 1],
+    ]);
+    expect(p.candidatos[0].dados).toEqual(com('a')); // os dados inteiros de cada origem
+    expect(p.candidatos[1].dados).toEqual(com('b'));
+  });
+
+  it('aparelho novo vazio e conta com dados: baixar', () => {
+    expect(planejarMigracao(vazio(), null, com('c'))).toEqual({ acao: 'baixar', dados: com('c') });
+  });
+
+  it('navegador igual à conta: nada', () => {
+    expect(planejarMigracao(com('c'), null, com('c'))).toEqual({ acao: 'nada' });
+    expect(planejarMigracao(com('c'), com('c'), com('c'))).toEqual({ acao: 'nada' });
+  });
+
+  it('navegador com aportes e conta diferente: escolher, sem enviar', () => {
+    const p = planejarMigracao(com('a'), null, com('c'));
+    expect(p.acao).toBe('escolher');
+    if (p.acao === 'escolher') expect(p.candidatos.map((c) => c.origem)).toEqual(['navegador', 'conta']);
+  });
+
+  it('vazio nunca vence quem tem aportes', () => {
+    expect(planejarMigracao(vazio(), vazio(), com('c'))).toEqual({ acao: 'baixar', dados: com('c') });
+    expect(planejarMigracao(com('a'), vazio(), vazio())).toMatchObject({ acao: 'enviar', origem: 'navegador' });
+  });
+
+  it('tudo vazio: nada', () => {
+    expect(planejarMigracao(vazio(), null, null)).toEqual({ acao: 'nada' });
+    expect(planejarMigracao(vazio(), vazio(), vazio())).toEqual({ acao: 'nada' });
+  });
+
+  it('três versões diferentes: os três candidatos, cada um inteiro', () => {
+    const p = planejarMigracao(com('a', 'n'), com('a'), com('a', 'c'));
+    expect(p.acao).toBe('escolher');
+    if (p.acao === 'escolher') expect(p.candidatos.map((c) => [c.origem, c.aportes])).toEqual([['navegador', 2], ['cofre-antigo', 1], ['conta', 2]]);
+  });
+
+  it('backup .json v1 importado: migrarDados e depois planejarMigracao com conta vazia dão enviar com versao 2', () => {
+    const v1 = { versao: 1, aportes: [aporteV1({ id: 'b1', vencimento: '2028-01-10' })], parametros: parametrosV1() };
+    const p = planejarMigracao(migrarDados(JSON.parse(JSON.stringify(v1))), null, null);
+    expect(p.acao).toBe('enviar');
+    if (p.acao === 'enviar') {
+      expect(p.dados.versao).toBe(2);
+      expect(p.dados.aportes[0].classe).toBe('CDB');
+      expect('tipo' in p.dados.aportes[0]).toBe(false);
+    }
   });
 });

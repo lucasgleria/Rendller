@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { tratarCofre, type Armazem, type Registro } from '../netlify/cofre';
+import { tratarCofre, type Armazem } from '../netlify/cofre';
+import { memoria } from './cofre.memoria';
 import { cifrar, decifrar, derivarCredenciais, gravarCofre, lerCofre, apagarCofre, remotoCofreAntigo, type Credenciais } from './cofre';
 import { aplicarConsultaCdi } from './domain/cdi';
 import { novoAporte, parametrosPadrao } from './domain/padroes';
@@ -26,33 +27,6 @@ function brutoV1(n: number): Record<string, unknown> {
   return JSON.parse(JSON.stringify({ versao: 1, aportes, parametros }));
 }
 
-/** Armazém em memória com ETag, como o Netlify Blobs. */
-function memoria(): Armazem & { mapa: Map<string, { registro: Registro; etag: string }>; atrapalhar?: () => void } {
-  const mapa = new Map<string, { registro: Registro; etag: string }>();
-  let n = 0;
-  const a = {
-    mapa,
-    atrapalhar: undefined as undefined | (() => void),
-    async ler(id: string) {
-      return mapa.get(id) ?? null;
-    },
-    async criar(id: string, registro: Registro) {
-      if (mapa.has(id)) return false;
-      mapa.set(id, { registro, etag: `e${++n}` });
-      return true;
-    },
-    async atualizar(id: string, registro: Registro, etag: string | undefined) {
-      a.atrapalhar?.();
-      if (mapa.get(id)?.etag !== etag) return false;
-      mapa.set(id, { registro, etag: `e${++n}` });
-      return true;
-    },
-    async apagar(id: string) {
-      mapa.delete(id);
-    },
-  };
-  return a;
-}
 
 describe('criptografia do cofre', () => {
   it('deriva sempre as mesmas credenciais da mesma frase', async () => {
