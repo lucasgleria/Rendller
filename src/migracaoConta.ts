@@ -363,17 +363,19 @@ export function criarDepsMigracao(f: FontesMigracao): DepsMigracao {
       }
     },
     aplicarLocal: (d) => {
-      gravarDados(s, d); // síncrono: dados:v2 vem antes da config da conta, para outra aba não ler dados velhos
+      try {
+        gravarDados(s, d); // síncrono: dados:v2 vem antes da config da conta, para outra aba não ler dados velhos
+      } catch {
+        // sem espaço: a conta pode já ter sido gravada, então a migração segue; `useDados` mostra o erro de
+        // gravação e a trava da adoção protege as outras abas
+      }
       f.aplicarLocal(d);
     },
     arquivarCofreAntigo: () => armz.arquivarCofreAntigo(),
     marcarMigrado: async (em, estado) => {
+      // dados:v2 só é gravado quando dados foram aplicados (`aplicarLocal`): com dados ilegíveis, o conteúdo salvo
+      // nunca é sobrescrito; uma aba que adotar a config antes de dados:v2 mudar cai na trava da adoção
       const id = await conta.identidade;
-      try {
-        gravarDados(s, f.lerDados()); // garante dados:v2 atual antes da config da conta
-      } catch {
-        /* sem espaço: os dados já foram gravados ao aplicar; a trava da adoção cobre o resto */
-      }
       f.aoMigrar({
         origem: 'conta',
         ...id,
