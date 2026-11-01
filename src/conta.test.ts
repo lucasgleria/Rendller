@@ -19,7 +19,6 @@ import { NuvemIndisponivel, SessaoExpirada } from './remoto';
 import { contratoRemoto } from './remoto.contrato';
 import {
   abrirRemoto,
-  bloqueioDaConta,
   contaConfere,
   cicloRemoto,
   classificarFalha,
@@ -242,10 +241,6 @@ describe('configs da conta e do cofre antigo', () => {
     expect(escolherConfig(null, null)).toBeNull();
   });
 
-  it('não ativa a conta com o cofre antigo ligado', () => {
-    expect(bloqueioDaConta(lerConfigSalva(JSON.stringify(antiga)))).toBe('A migração do cofre antigo vem na próxima versão; por enquanto mantenha um só.');
-    expect(bloqueioDaConta(null)).toBeNull();
-  });
 });
 
 describe('cliente da conta', () => {

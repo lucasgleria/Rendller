@@ -1,13 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Carga } from './armazenamento';
+import { baixarArquivo } from './armazenamento';
 import { derivarChaveDaConta, derivarCredenciais, lerCofre, remotoCofreAntigo, type Credenciais } from './cofre';
 import { clienteSupabase, lerCofreDaConta, remotoDaConta, sair, sessaoAtual, type ClienteCofre } from './conta';
+import type { Candidato } from './domain/migracao';
+import {
+  armazenamentoMigracao,
+  concluirEscolha,
+  lerCofreAntigoCom,
+  migrarParaConta,
+  nomeBackup,
+  type DepsMigracao,
+  type ResultadoMigracao,
+} from './migracaoConta';
 import { aguardandoDepois, ajustarImpressaoAposNormalizacao, impressao, paraNuvem } from './domain/sincronia';
 import type { Dados } from './domain/types';
 import { SessaoExpirada } from './remoto';
 import {
   abrirRemoto,
-  bloqueioDaConta,
   cicloRemoto,
   classificarFalha,
   escolherConfig,
@@ -227,20 +237,88 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, c
     return { ...p, destino: { origem: 'cofre-antigo', cred } };
   }, []);
 
+  /** Dependências da migração em andamento (guardadas enquanto o usuário escolhe uma versão). */
+  const migracao = useRef<DepsMigracao | null>(null);
+
   /**
-   * Ativação pela conta (depois de entrar): a chave vem da frase-senha e do id da conta. A derivação (lenta) e a
-   * leitura do cofre rodam em paralelo. Frase que não decifra o cofre existente: erro, sem oferecer envio.
+   * Ativação pela conta = migração (Fase 5): junta navegador, cofre antigo (com as credenciais salvas aqui) e conta.
+   * Chamar direto do clique: o backup .json é baixado de forma síncrona, antes de qualquer await de rede.
    */
-  const prepararConta = useCallback(async (frase: string): Promise<Preparacao> => {
-    const bloqueio = bloqueioDaConta(configAntiga());
-    if (bloqueio) throw new Error(bloqueio);
-    const sessao = await sessaoAtual();
-    if (!sessao) throw new SessaoExpirada();
-    const cliente = (await clienteSupabase()) as unknown as ClienteCofre;
-    const [chave, r] = await Promise.all([derivarChaveDaConta(frase, sessao.userId), lerCofreDaConta(cliente)]);
-    const p = await prepararAtivacao(r, remotoDaConta(cliente, chave), dadosRef.current, 'conta');
-    return { ...p, destino: { origem: 'conta', userId: sessao.userId, email: sessao.email, chave: chave.chave } };
-  }, []);
+  const migrarConta = useCallback(
+    (frase: string): Promise<ResultadoMigracao> => {
+      const agora = new Date().toISOString();
+      const navegador = dadosRef.current;
+      baixarArquivo(nomeBackup(agora), JSON.stringify(navegador, null, 2)); // no clique
+      const armz = armazenamentoMigracao(localStorage);
+      const sessao = sessaoAtual().then((s) => {
+        if (!s) throw new SessaoExpirada();
+        return s;
+      });
+      const cliente = clienteSupabase().then((c) => c as unknown as ClienteCofre);
+      // conta e chave ativas, preenchidas quando a chave fica pronta (antes de qualquer gravação ou aplicação)
+      let ativa: { userId: string; email: string; chave: string } | null = null;
+      const conta = Promise.all([cliente, sessao]).then(async ([c, s]) => {
+        const k = await derivarChaveDaConta(frase, s.userId);
+        ativa = { userId: s.userId, email: s.email, chave: k.chave };
+        return remotoDaConta(c, k);
+      });
+      const deps: DepsMigracao = {
+        lerNavegador: () => navegador,
+        lerCofreAntigo: async () => {
+          const c = configAntiga();
+          return c && c.origem === 'cofre-antigo' ? lerCofreAntigoCom(c.cred, navegador) : null;
+        },
+        conta: {
+          // a leitura não depende da chave: roda em paralelo com a derivação
+          ler: async () => (await sessao, lerCofreDaConta(await cliente)),
+          gravar: async (b, e) => (await conta).gravar(b, e),
+          apagar: async () => (await conta).apagar(),
+        },
+        cifraConta: () => conta,
+        baixarBackup: () => undefined, // já baixado acima, no clique
+        guardarCopia: (d, origem) => {
+          try {
+            armz.guardarCopia(d, origem, new Date().toISOString());
+          } catch {
+            throw new Error('Sem espaço para guardar a cópia de segurança neste navegador; nada foi alterado.');
+          }
+        },
+        aplicarLocal: (d) => {
+          substituir(d);
+          dadosRef.current = d;
+        },
+        arquivarCofreAntigo: () => armz.arquivarCofreAntigo(),
+        marcarMigrado: (em, estado) => {
+          if (!ativa) throw new Error('Conta não identificada.');
+          migracao.current = null;
+          aguardandoCofre.current = false;
+          salvarConfig({ origem: 'conta', ...ativa, versao: estado.versao, impressao: impressao(estado.dados), ultimaSync: new Date().toISOString(), migradoEm: em });
+          setConflito(null);
+          setErro(null);
+          setPrecisaEntrar(false);
+          setStatus('sincronizado');
+        },
+        migradoEm: () => null, // aparelho ainda sem conta ativa
+      };
+      migracao.current = deps;
+      return enfileirar(async () => {
+        const r = await migrarParaConta(deps, agora);
+        if (r.tipo === 'falhou') migracao.current = null;
+        return r;
+      });
+    },
+    [enfileirar, salvarConfig, substituir],
+  );
+
+  /** Conclui a migração com a versão escolhida (navegador, cofre antigo ou conta). */
+  const concluirEscolhaConta = useCallback(
+    (escolhido: Candidato): Promise<ResultadoMigracao> => {
+      const deps = migracao.current;
+      if (!deps) return Promise.resolve({ tipo: 'falhou', erro: 'A migração não está mais em andamento; entre na conta de novo.' });
+      return enfileirar(() => concluirEscolha(deps, escolhido, new Date().toISOString()));
+    },
+    [enfileirar],
+  );
 
   /** Segundo passo: `nuvem` traz os dados da nuvem para cá; `local` envia os daqui para a nuvem. */
   const concluir = useCallback(
@@ -333,6 +411,7 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, c
       email: config?.origem === 'conta' ? config.email : '',
       userId: config?.origem === 'conta' ? config.userId : '',
       cofreAntigoAtivo: !!configAntiga(),
+      cofreAntigoArquivado: armazenamentoMigracao(localStorage).cofreAntigoArquivado(),
       status,
       erro,
       precisaEntrar,
@@ -340,7 +419,8 @@ export function useSincronizacao(dados: Dados, substituir: (d: Dados) => void, c
       ultimaSync: config?.ultimaSync ?? '',
     },
     preparar,
-    prepararConta,
+    migrarConta,
+    concluirEscolhaConta,
     concluir,
     resolverConflito,
     sincronizar,

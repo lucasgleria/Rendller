@@ -18,10 +18,12 @@ interface Comum {
 /** Cofre antigo (`rendller:sync:v1`) ou cofre da conta (`rendller:conta:v1`); cada um na própria chave. */
 export type ConfigSync =
   | (Comum & { origem: 'cofre-antigo'; cred: Credenciais })
-  | (Comum & { origem: 'conta'; userId: string; email: string; chave: string }); // chave derivada da frase, como no cofre antigo
+  | (Comum & { origem: 'conta'; userId: string; email: string; chave: string; migradoEm?: string }); // chave derivada da frase, como no cofre antigo
 
 export const MENSAGEM_FRASE_DIFERENTE = 'Frase-senha diferente da usada nesta conta';
-export const MENSAGEM_BLOQUEIO_CONTA = 'A migração do cofre antigo vem na próxima versão; por enquanto mantenha um só.';
+/** Mostrado antes de entrar na conta quando o cofre antigo está ativo neste aparelho. */
+export const AVISO_MIGRAR_TODOS =
+  'Migre todos os seus aparelhos no mesmo dia. Edições feitas num aparelho ainda não migrado vão só para o cofre antigo e, quando ele migrar, você vai precisar escolher uma versão.';
 
 /** Lê a config salva em `rendller:sync:v1`; a gravada sem `origem` é do cofre antigo. Origem desconhecida não liga nada. */
 export function lerConfigSalva(bruto: string | null): ConfigSync | null {
@@ -49,11 +51,6 @@ export function lerContaSalva(bruto: string | null): ConfigSync | null {
 /** Com as duas configs presentes, a conta sincroniza; a do cofre antigo fica intacta. */
 export function escolherConfig(antiga: ConfigSync | null, conta: ConfigSync | null): ConfigSync | null {
   return conta ?? antiga;
-}
-
-/** Por ora, a conta não é ativada com o cofre antigo ligado: os dados nunca vão para os dois lados. */
-export function bloqueioDaConta(antiga: ConfigSync | null): string | null {
-  return antiga ? MENSAGEM_BLOQUEIO_CONTA : null;
 }
 
 /**
