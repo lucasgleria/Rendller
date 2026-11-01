@@ -25,5 +25,6 @@ jobs:
             echo "::warning::Secrets SUPABASE_URL e SUPABASE_PUBLISHABLE_KEY não configurados; nada a fazer."
             exit 0
           fi
+          URL="${URL%/}"; URL="${URL%/rest/v1}"; URL="${URL%/}"
           curl -fsS -X POST "$URL/rest/v1/rpc/ping" -H "apikey: $KEY" -H "content-type: application/json" -d '{}'
           echo

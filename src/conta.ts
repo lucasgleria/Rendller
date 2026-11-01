@@ -9,7 +9,15 @@ import { NuvemIndisponivel, type Cifra, type Remoto, type RespostaRemota } from 
  * A senha da conta nunca é guardada pelo app: a sessão fica com o supabase-js.
  */
 
-const URL_SUPABASE = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+/**
+ * Endereço base do projeto (`https://<ref>.supabase.co`). Aceita também o endereço da API REST copiado do painel
+ * (`…/rest/v1/`): com o sufixo, o login iria para `…/rest/v1/auth/v1/…` ("Invalid path specified in request URL").
+ */
+export function urlBaseSupabase(url: string): string {
+  return url.trim().replace(/\/+$/, '').replace(/\/rest\/v1$/i, '').replace(/\/+$/, '');
+}
+
+const URL_SUPABASE = urlBaseSupabase((import.meta.env.VITE_SUPABASE_URL as string | undefined) ?? '');
 const CHAVE_PUBLICAVEL = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string | undefined;
 
 /** Lido na chamada (não no carregamento do módulo) para os testes poderem simular a ausência das variáveis. */
@@ -25,7 +33,7 @@ export function clienteSupabase(): Promise<SupabaseClient> {
   cliente ??= import('@supabase/supabase-js').then((m) =>
     // PKCE declarado (no auth-js 2.118 o padrão é implicit, que põe tokens no fragmento da URL). A recuperação de
     // senha chega por token_hash na query e é tratada pelo app (`confirmarRecuperacao`): o cliente não lê a URL
-    m.createClient(URL_SUPABASE!, CHAVE_PUBLICAVEL!, {
+    m.createClient(URL_SUPABASE, CHAVE_PUBLICAVEL!, {
       auth: { flowType: 'pkce', persistSession: true, detectSessionInUrl: false, autoRefreshToken: true },
     }),
   );
