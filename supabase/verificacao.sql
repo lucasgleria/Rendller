@@ -1,4 +1,5 @@
--- Verificação manual da migração 20261101000000_cofres.sql (Passo 2 do plano), no SQL Editor do Supabase.
+-- Verificação manual das migrações 20261101000000_cofres.sql e 20261110000000_batimento.sql, no SQL Editor
+-- do Supabase. Aplique as duas antes. Só vale com os 7 "OK: …".
 --
 -- COMO LER O RESULTADO: só vale o "OK: …" ou "FALHOU: …" de cada bloco (aba de mensagens/notices).
 --   * Cada bloco é um único `do $$ … $$`. Se ele mostrar "OK: <nome>", passou.
@@ -215,5 +216,42 @@ begin
     raise exception 'FALHOU: trigger cofres_versao_sequencial ausente';
   end if;
   raise notice 'OK: bloco 6 (RLS, grants e trigger)';
+end
+$$;
+
+-- Bloco 7: anon grava o batimento; continua uma linha só e a tabela fica fechada ----------------------------
+do $$
+declare
+  c0 bigint;
+  t1 timestamptz;
+  t2 timestamptz;
+  n integer;
+  c bigint;
+begin
+  if has_table_privilege('anon', 'private.batimento', 'select') then
+    raise exception 'FALHOU: anon pode ler private.batimento';
+  end if;
+  if has_table_privilege('authenticated', 'private.batimento', 'update') then
+    raise exception 'FALHOU: authenticated pode alterar private.batimento';
+  end if;
+  if not has_function_privilege('anon', 'public.batimento()', 'execute') then
+    raise exception 'FALHOU: anon não pode executar batimento()';
+  end if;
+  begin
+    c0 := coalesce((select b.contagem from private.batimento as b where b.id = 1), 0);
+    perform set_config('role', 'anon', true);
+    perform set_config('request.jwt.claims', '{"role":"anon"}', true);
+    t1 := public.batimento();
+    t2 := public.batimento();
+    if t1 is null or t2 is null then raise exception 'FALHOU: batimento() devolveu nulo'; end if;
+    perform set_config('role', 'none', true);
+    select count(*), max(b.contagem) into n, c from private.batimento as b;
+    if n <> 1 then raise exception 'FALHOU: private.batimento tem % linhas (esperado 1)', n; end if;
+    if c <> c0 + 2 then raise exception 'FALHOU: contagem foi de % para % (esperado +2)', c0, c; end if;
+    raise exception using errcode = 'RB001', message = 'desfazer';
+  exception when sqlstate 'RB001' then
+    null;
+  end;
+  raise notice 'OK: bloco 7 (batimento para anon, uma linha, tabela fechada)';
 end
 $$;
