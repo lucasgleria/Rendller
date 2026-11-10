@@ -63,7 +63,7 @@ O plano Free do Supabase pausa o projeto depois de 7 dias de pouca atividade. Ne
 
 - o app **segue funcionando com os dados locais** e mostra "Nuvem indisponível (o projeto pode estar pausado)"; as alterações são enviadas quando a nuvem voltar;
 - para despausar, restaure o projeto pelo painel do Supabase (ele fica disponível para restauração por até 1 ano);
-- o workflow `.github/workflows/manter-supabase.yml` faz uma consulta leve a cada 3 dias para evitar a pausa. Abrir o app com a conta também conta como atividade;
+- o workflow `.github/workflows/manter-supabase.yml` grava um batimento no banco (`batimento()`) todo dia para evitar a pausa e fica vermelho se o projeto estiver pausado. Abrir o app com a conta também conta como atividade;
 - o GitHub **desativa workflows agendados de repositórios sem atividade por 60 dias**: se isso acontecer, reative-o em *Actions*;
 - o agendamento **só vale a partir do branch padrão do GitHub**. Enquanto o workflow estiver só no branch `feat/conta-e-classes`, ele não roda sozinho.
 

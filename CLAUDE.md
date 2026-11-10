@@ -46,14 +46,14 @@ Antes de dizer que uma mudança está pronta, rode `npm test` e `npm run build`.
 | `src/migracaoConta.ts` | Migração para a conta (efeitos injetáveis, `criarDepsMigracao`): backup no clique, leitura de navegador, cofre antigo e conta, escolha sem fusão, decisões de aba (`configParaAba`, `depoisDeDesativar`, `adocaoDeConfig`). Chaves: `rendller:sync:v1:migrado` (cofre antigo arquivado após a migração), `rendller:sync:v1:migracao-pendente` (cofre antigo guardado ao sair da conta com a migração incompleta), `rendller:copia-antes-da-conta` (até 3 versões substituídas), `rendller:conta:v1` (config da conta) |
 | `src/cofre.memoria.ts` | Armazém em memória do cofre antigo (só testes importam) |
 | `src/sincronizacao.ts` | Hook de sincronização (só efeitos: fila, estado, timers) sobre `Remoto & Cifra`; decisões puras em `domain/sincronia.ts` (`planejarCiclo`, `decidirCiclo`) |
-| `supabase/migrations/`, `supabase/verificacao.sql`, `supabase/README.md` | Tabela `cofres` com RLS, trigger de versão, `gravar_cofre()` e `ping()`; verificação manual com asserções; roteiro de configuração do Supabase e do Netlify ([supabase/README.md](supabase/README.md)) |
+| `supabase/migrations/`, `supabase/verificacao.sql`, `supabase/README.md` | Tabela `cofres` com RLS, trigger de versão, `gravar_cofre()`, `ping()` e `batimento()` (linha única em `private.batimento`, contra a pausa); verificação manual com asserções; roteiro de configuração do Supabase e do Netlify ([supabase/README.md](supabase/README.md)) |
 | `netlify/cofre.ts`, `netlify/functions/cofre.mts` | Servidor do cofre (Netlify Function + Netlify Blobs); guarda só conteúdo cifrado |
 | `netlify.toml` | Build, proxy da ANBIMA e cabeçalhos do deploy no Netlify |
 | `src/pages/*.tsx` | Telas: Painel, Aportes, Instituições, Simulador, Parâmetros |
 | `src/components/campos.tsx` | Campos de formulário (números pt-BR, percentuais com `escala={100}`) |
 | `src/components/CartaoSincronizacao.tsx`, `ContaForms.tsx`, `MigracaoConta.tsx` | Cartão de sincronização: cofre antigo, entrar com conta, nova senha, migração e escolha de versão |
 | `.github/workflows/ci.yml` | Testes e build a cada push (não precisa das variáveis do Supabase) |
-| `.github/workflows/manter-supabase.yml` | Consulta leve (`ping()`) a cada 3 dias para o projeto Supabase Free não pausar; secrets `SUPABASE_URL` e `SUPABASE_PUBLISHABLE_KEY`; o agendamento só vale no branch padrão do GitHub |
+| `.github/workflows/manter-supabase.yml` | Batimento diário (`batimento()`, uma escrita real; o `ping()` a cada 3 dias não impediu a pausa em 11/2026) para o projeto Supabase Free não pausar; falha visível sem secrets ou com o projeto pausado; o job `manter-agendamento` reabilita o workflow pela API contra a desativação após 60 dias; secrets `SUPABASE_URL` e `SUPABASE_PUBLISHABLE_KEY`; o agendamento só vale no branch padrão do GitHub |
 | `src/formato.ts` | Formatação BRL, %, datas `dd/mm/aaaa` |
 
 Regras de arquitetura:
@@ -196,7 +196,7 @@ Os valores esperados foram conferidos por um cálculo independente (CDI 13,90% a
 
 - Deploy no Netlify em https://rendller.netlify.app/ (`netlify.toml`), decidido pelo usuário em 04/10/2026. O GitHub Actions roda CI e o workflow contra a pausa do Supabase.
 - Fases 1 a 6 do `docs/plano-escalar.md` estão no branch padrão (`claude/project-thread-ytvftg`) e publicadas no Netlify desde 01/11/2026 (commit `63e2a67`). Falta: conferência manual, migrar os aparelhos reais (todos no mesmo dia) e a Fase 7.
-- Falta a configuração real do Supabase e do Netlify ([supabase/README.md](supabase/README.md)), incluindo a verificação SQL (só vale "6 OK") e os secrets do workflow `manter-supabase.yml`.
+- Falta a configuração real do Supabase e do Netlify ([supabase/README.md](supabase/README.md)), incluindo a verificação SQL (as duas migrações; só vale "7 OK") e os secrets do workflow `manter-supabase.yml`.
 - Falta a conferência manual em perfis limpos de navegador (dois navegadores com a mesma conta, conflito, frase errada, recuperação de senha) e o ensaio da migração com um backup real.
 - **Fase 7** (desligar o cofre antigo e o `/api/cofre`): só depois de o usuário confirmar que todos os aparelhos migraram.
 - O CDI padrão (13,90%, da planilha) só vale até a primeira consulta ao Banco Central; depois o CDI de projeção acompanha o último CDI publicado.

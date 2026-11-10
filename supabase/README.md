@@ -34,11 +34,11 @@ O SMTP padrão manda poucos e-mails por hora e só para membros da equipe do pro
 
 ## 4. Banco
 
-1. Em **SQL Editor**, cole e rode `supabase/migrations/20261101000000_cofres.sql`. Ele pode ser reaplicado sem erro.
+1. Em **SQL Editor**, cole e rode, nesta ordem, `supabase/migrations/20261101000000_cofres.sql` e `supabase/migrations/20261110000000_batimento.sql`. Os dois podem ser reaplicados sem erro.
 2. Abra `supabase/verificacao.sql` e troque:
    - `<UUID_A>` pelo User UID da sua conta;
    - `<UUID_B>` por qualquer outro uuid, por exemplo `00000000-0000-0000-0000-00000000000b`.
-3. Rode o arquivo inteiro. **Só vale se aparecerem os 6 "OK: …"** e nenhum "FALHOU: …" ou outro erro. A verificação não deixa dados na tabela.
+3. Rode o arquivo inteiro. **Só vale se aparecerem os 7 "OK: …"** e nenhum "FALHOU: …" ou outro erro. A verificação não deixa dados na tabela.
 
 ## 5. Chaves e variáveis
 
@@ -48,11 +48,13 @@ O SMTP padrão manda poucos e-mails por hora e só para membros da equipe do pro
 
 ## 6. Manter o projeto ativo
 
-O plano Free pausa o projeto depois de 7 dias de pouca atividade. O workflow `.github/workflows/manter-supabase.yml` chama `ping()` a cada 3 dias:
+O plano Free pausa o projeto depois de 7 dias de pouca atividade. Um `ping()` (`select 1`) a cada 3 dias não bastou: o projeto foi pausado em novembro de 2026 mesmo com ele. Por isso o workflow `.github/workflows/manter-supabase.yml` chama `batimento()` **todo dia**, e essa função grava a data e uma contagem numa linha única de `private.batimento`, sem dado nenhum seu:
 1. No GitHub, em **Settings → Secrets and variables → Actions**, cadastre `SUPABASE_URL` e `SUPABASE_PUBLISHABLE_KEY`, com os mesmos valores do passo 5.
-2. Rode o workflow uma vez por **Actions → Manter o Supabase ativo → Run workflow** e confira a resposta `1` no log.
+2. Rode o workflow uma vez por **Actions → Manter o Supabase ativo → Run workflow** e confira, no job `batimento`, uma data e hora no log (a resposta de `batimento()`).
 
-O agendamento **só vale a partir do branch padrão do repositório**, e o botão **Run workflow** também só aparece quando o arquivo está no branch padrão. Enquanto o workflow estiver só no branch `feat/conta-e-classes`, ele não roda sozinho nem pode ser disparado à mão. O GitHub também desativa workflows agendados de repositórios sem atividade por 60 dias.
+Se o workflow ficar vermelho, o GitHub avisa por e-mail. Sem os secrets, cadastre-os (passo 1). Com `Could not resolve host` (curl 6), o projeto foi pausado: em supabase.com, abra o projeto e clique em **Restore project** (dentro de 90 dias os dados, a URL e as chaves continuam os mesmos) e rode o workflow de novo.
+
+O agendamento **só vale a partir do branch padrão do repositório**, e o botão **Run workflow** também só aparece quando o arquivo está no branch padrão. O GitHub desativa workflows agendados de repositórios sem atividade por 60 dias; o job `manter-agendamento` reabilita este workflow pela API a cada execução, o que renova esse prazo sem precisar de commit.
 
 ## 7. Conferência
 
