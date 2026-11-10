@@ -1,30 +1,48 @@
 name: Manter o Supabase ativo
 
-# O plano Free do Supabase pausa o projeto depois de 7 dias de pouca atividade. Esta consulta leve (ping(), que não
-# lê dado nenhum) roda a cada 3 dias. Os secrets SUPABASE_URL e SUPABASE_PUBLISHABLE_KEY são cadastrados pelo
-# usuário em Settings → Secrets and variables → Actions. A chave publicável é pública por desenho; nunca use a secret.
-# O GitHub desativa workflows agendados de repositórios sem atividade por 60 dias.
+# O plano Free do Supabase pausa o projeto depois de 7 dias sem atividade. Um ping() (select 1) a cada 3 dias não
+# bastou (pausa em 11/2026), então o job grava um batimento real no banco (batimento(), uma linha em
+# private.batimento, sem dado do usuário) todo dia. Sem secrets, ou com o projeto pausado, o job falha e o GitHub
+# avisa por e-mail. Os secrets SUPABASE_URL e SUPABASE_PUBLISHABLE_KEY ficam em Settings → Secrets and variables →
+# Actions. A chave publicável é pública por desenho; nunca use a secret.
+# O GitHub desativa workflows agendados de repositórios sem atividade por 60 dias; o job manter-agendamento
+# reabilita este workflow pela API a cada execução, o que renova esse prazo sem commit.
 on:
   schedule:
-    - cron: '17 9 */3 * *'
+    - cron: '17 9 * * *'
   workflow_dispatch:
 
 permissions: {}
 
 jobs:
-  ping:
+  batimento:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 5
     steps:
-      - name: Consulta leve ao Supabase
+      - name: Batimento no Supabase
         env:
           URL: ${{ secrets.SUPABASE_URL }}
           KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
         run: |
           if [ -z "$URL" ] || [ -z "$KEY" ]; then
-            echo "::warning::Secrets SUPABASE_URL e SUPABASE_PUBLISHABLE_KEY não configurados; nada a fazer."
-            exit 0
+            echo "::error::Cadastre SUPABASE_URL e SUPABASE_PUBLISHABLE_KEY em Settings → Secrets and variables → Actions."
+            exit 1
           fi
           URL="${URL%/}"; URL="${URL%/rest/v1}"; URL="${URL%/}"
-          curl -fsS -X POST "$URL/rest/v1/rpc/ping" -H "apikey: $KEY" -H "content-type: application/json" -d '{}'
+          curl -fsS --retry 3 --retry-all-errors --retry-delay 20 --max-time 30 \
+            -X POST "$URL/rest/v1/rpc/batimento" -H "apikey: $KEY" -H "content-type: application/json" -d '{}'
           echo
+      - name: Explicar a falha
+        if: failure()
+        run: echo "::error::Batimento falhou. Se o host não resolve (curl 6), o projeto está pausado; restaure em supabase.com → projeto → Restore project e rode este workflow de novo."
+
+  manter-agendamento:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Reabilitar este workflow (renova o prazo de 60 dias)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/$GITHUB_REPOSITORY/actions/workflows/manter-supabase.yml/enable"
