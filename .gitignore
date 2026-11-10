@@ -3,3 +3,9 @@ dist
 *.local
 .DS_Store
 *.tsbuildinfo
+
+# Dados do usuário: backups e planilhas nunca entram no repositório (público)
+rendller-*.json
+*.xlsx
+*.xls
+*.csv

@@ -182,10 +182,12 @@ Os valores esperados foram conferidos por um cálculo independente (CDI 13,90% a
 - Fundir aportes de datas diferentes.
 - Apagar dados do usuário ou mudar o formato salvo sem manter compatibilidade com backups antigos.
 - Confundir corretora distribuidora com emissor do título.
+- Escrever em arquivos versionados dados pessoais da carteira (valores, datas de aportes, instituições e vínculos bancários do usuário) ou commitar backups e planilhas: o repositório é público.
 - Pedir senhas, tokens ou dados de acesso bancário. A frase-senha da sincronização é digitada só no app; nunca peça, registre ou envie a frase (nem a chave derivada) para lugar nenhum.
 
 ## 10. Contexto do projeto (histórico, não regra)
 
+- O repositório é **público**. A carteira do usuário, as instituições em que ele tem ou pediu conta e os cenários pessoais ficam fora dele, no vault pessoal do usuário (desde 10/11/2026). Nunca escreva esses dados em arquivos versionados.
 - A planilha original foi auditada em 04/10/2026; a contagem de dias sem feriados e o IR fixo nas fórmulas eram os principais problemas, e o app já nasce corrigido.
 - Premissas tributárias e de FGC revisadas em **outubro/2026**. Se o uso for depois de mudança regulatória, revise a seção 4 e `padroes.ts`.
 
