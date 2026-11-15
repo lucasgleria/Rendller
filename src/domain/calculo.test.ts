@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { aliquotaIR, avaliar, fimCarencia, percentualIOF, regimeDe, resgatarParcial, validarAporte, type ResgateParcial } from './calculo';
 import { agruparPorInstituicao, montarLinhas, resumir, serieProjecao } from './carteira';
-import { APORTES_CARTEIRA_REAL, HOJE_CARTEIRA_REAL, LIQUIDO_HOJE_CARTEIRA_REAL, LIQUIDO_VENCIMENTO_CARTEIRA_REAL } from './carteiraReal.fixture';
+import { APORTES_CARTEIRA_REFERENCIA, HOJE_CARTEIRA_REFERENCIA, LIQUIDO_HOJE_CARTEIRA_REFERENCIA, LIQUIDO_VENCIMENTO_CARTEIRA_REFERENCIA } from './carteiraReferencia.fixture';
 import { inicioConsulta, lerSerieBcb, mesclarCdi, ultimoCdi } from './cdi';
 import { Calendario, diasNoMes, feriadosNacionais, isISODate, somaDias, somaMeses } from './datas';
 import { CALENDARIO_ANBIMA } from './feriadosAnbima';
@@ -107,14 +107,14 @@ describe('casos obrigatórios (CLAUDE.md seção 6)', () => {
 });
 
 describe('carteira de referência (fictícia)', () => {
-  const aportes = APORTES_CARTEIRA_REAL.map((x) => cdb(x));
-  const linhas = montarLinhas(aportes, HOJE_CARTEIRA_REAL, p);
+  const aportes = APORTES_CARTEIRA_REFERENCIA.map((x) => cdb(x));
+  const linhas = montarLinhas(aportes, HOJE_CARTEIRA_REFERENCIA, p);
   it('bate com a referência no vencimento', () => {
-    expect(linhas.map((l) => +l.vencimento.liquido.toFixed(2))).toEqual(LIQUIDO_VENCIMENTO_CARTEIRA_REAL);
+    expect(linhas.map((l) => +l.vencimento.liquido.toFixed(2))).toEqual(LIQUIDO_VENCIMENTO_CARTEIRA_REFERENCIA);
     expect(resumir(linhas, p).liquidoVencimento).toBeCloseTo(4973.58, 2);
   });
   it('bate com a referência hoje', () => {
-    expect(linhas.map((l) => +l.hoje.liquido.toFixed(2))).toEqual(LIQUIDO_HOJE_CARTEIRA_REAL);
+    expect(linhas.map((l) => +l.hoje.liquido.toFixed(2))).toEqual(LIQUIDO_HOJE_CARTEIRA_REFERENCIA);
     expect(linhas[2].alertas).toContain('IOF ativo');
   });
 });

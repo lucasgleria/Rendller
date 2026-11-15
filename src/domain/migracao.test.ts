@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { avaliar } from './calculo';
-import { APORTES_CARTEIRA_REAL, HOJE_CARTEIRA_REAL, LIQUIDO_HOJE_CARTEIRA_REAL, LIQUIDO_VENCIMENTO_CARTEIRA_REAL } from './carteiraReal.fixture';
+import { APORTES_CARTEIRA_REFERENCIA, HOJE_CARTEIRA_REFERENCIA, LIQUIDO_HOJE_CARTEIRA_REFERENCIA, LIQUIDO_VENCIMENTO_CARTEIRA_REFERENCIA } from './carteiraReferencia.fixture';
 import { Calendario } from './datas';
 import { classeDoTipoV1, migrarDados, planejarMigracao } from './migracao';
 import type { Dados } from './types';
@@ -18,9 +18,9 @@ function aporteV1(parcial: Record<string, unknown>, tipo = 'CDB Pós-fixado') {
   return { ...v1, tipo };
 }
 
-/** Os 3 aportes da carteira real em v1: o 1º com resgate registrado, o 2º vindo de um resgate parcial. */
+/** Os 3 aportes da carteira de referência em v1: o 1º com resgate registrado, o 2º vindo de um resgate parcial. */
 function dadosV1(): unknown {
-  const aportes = APORTES_CARTEIRA_REAL.map((x, i) => aporteV1({ ...x, id: `real-${i}` }));
+  const aportes = APORTES_CARTEIRA_REFERENCIA.map((x, i) => aporteV1({ ...x, id: `ref-${i}` }));
   aportes[0].resgate = { data: '2026-10-04', valorBruto: 1239.11, irRetido: 8.8, iofRetido: 0, valorLiquido: 1230.31 };
   aportes[1].divisao = { origemId: 'lote-antigo', valorOriginal: 1600, data: '2026-09-20', fracao: 0.5 };
   return JSON.parse(JSON.stringify({ versao: 1, aportes, parametros: parametrosV1() }));
@@ -72,7 +72,7 @@ describe('migração de formato (v1 → v2)', () => {
     expect(d.parametros.regimes.Outro).toEqual(parametrosPadrao().regimes.Outro);
   });
 
-  it('números da carteira real não mudam', () => {
+  it('números da carteira de referência não mudam', () => {
     const v1 = dadosV1() as { aportes: Parameters<typeof avaliar>[0][]; parametros: Parameters<typeof avaliar>[2] };
     const d = migrarDados(v1);
     const cal = new Calendario(d.parametros.feriados);
@@ -84,8 +84,8 @@ describe('migração de formato (v1 → v2)', () => {
         expect([novo.liquido, novo.ir, novo.iof]).toEqual([antigo.liquido, antigo.ir, antigo.iof]);
         return +novo.liquido.toFixed(2);
       });
-    expect(aval(() => HOJE_CARTEIRA_REAL)).toEqual(LIQUIDO_HOJE_CARTEIRA_REAL);
-    expect(aval((i) => d.aportes[i].vencimento)).toEqual(LIQUIDO_VENCIMENTO_CARTEIRA_REAL);
+    expect(aval(() => HOJE_CARTEIRA_REFERENCIA)).toEqual(LIQUIDO_HOJE_CARTEIRA_REFERENCIA);
+    expect(aval((i) => d.aportes[i].vencimento)).toEqual(LIQUIDO_VENCIMENTO_CARTEIRA_REFERENCIA);
   });
 
   it('rejeita lixo e versão futura', () => {

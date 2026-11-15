@@ -105,11 +105,11 @@ export function rotuloAporte(a: Aporte): string;           // ex.: "CDB · 103% 
 Regimes padrão nesta fase (o comportamento atual, sem valor regulatório novo): `CDB` e `Outro` = `{ ir: 'regressivo', iof: true, fgc: true, carenciaMinimaDias: 0 }`. `Outro` mantém `fgc: true` porque hoje todo lote conta no FGC; mudar isso alteraria números sem aviso.
 
 - [ ] **Passo 1: escrever os testes que falham** em `src/domain/migracao.test.ts`:
-  - `v1 vira v2 sem perder aporte`: fixture v1 com os 3 aportes da carteira real (tipo `'CDB Pós-fixado'`), um com `resgate` e um com `divisao`. Esperado: `versao === 2`; mesmos `id` na mesma ordem; `classe === 'CDB'`; `'tipo' in a === false`; todos os outros campos de cada aporte iguais (`toEqual` após remover `tipo`).
+  - `v1 vira v2 sem perder aporte`: fixture v1 com os 3 aportes da carteira de referência (fictícia) (tipo `'CDB Pós-fixado'`), um com `resgate` e um com `divisao`. Esperado: `versao === 2`; mesmos `id` na mesma ordem; `classe === 'CDB'`; `'tipo' in a === false`; todos os outros campos de cada aporte iguais (`toEqual` após remover `tipo`).
   - `'Outro renda fixa' vira classe Outro`.
   - `é idempotente`: `migrarDados(migrarDados(v1))` `toEqual` `migrarDados(v1)`.
   - `parâmetros v1 ganham regimes padrão sem perder o que foi configurado`: `cdiAnual`, `feriados` e `tabelaIR` da fixture preservados; `regimes.CDB` presente.
-  - `números da carteira real não mudam`: `avaliar()` de cada aporte migrado nas datas de referência de `calculo.test.ts` (bloco "carteira real da planilha") devolve os mesmos `liquido`, `ir` e `iof` do teste existente. Reaproveite as constantes de lá, sem copiar números novos.
+  - `números da carteira de referência não mudam`: `avaliar()` de cada aporte migrado nas datas de referência de `calculo.test.ts` (bloco "carteira de referência") devolve os mesmos `liquido`, `ir` e `iof` do teste existente. Reaproveite as constantes de lá, sem copiar números novos.
   - `rejeita lixo e versão futura`: `null`, `{}`, `{ versao: 3, aportes: [], parametros: {} }` e `{ versao: 1, aportes: 'x' }` lançam `Error`. A mensagem da versão 3 contém `"versão mais nova do app"`.
 
   Em `src/armazenamento.test.ts`, com um `Storage` em memória:
