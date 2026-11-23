@@ -53,7 +53,7 @@ Antes de dizer que uma mudança está pronta, rode `npm test` e `npm run build`.
 | `src/components/campos.tsx` | Campos de formulário (números pt-BR, percentuais com `escala={100}`) |
 | `src/components/CartaoSincronizacao.tsx`, `ContaForms.tsx`, `MigracaoConta.tsx` | Cartão de sincronização: cofre antigo, entrar com conta, nova senha, migração e escolha de versão |
 | `.github/workflows/ci.yml` | Testes e build a cada push (não precisa das variáveis do Supabase) |
-| `.github/workflows/manter-supabase.yml` | Batimento diário (`batimento()`, uma escrita real; o `ping()` a cada 3 dias não impediu a pausa em 11/2026) para o projeto Supabase Free não pausar; falha visível sem secrets ou com o projeto pausado; o job `manter-agendamento` reabilita o workflow pela API contra a desativação após 60 dias; secrets `SUPABASE_URL` e `SUPABASE_PUBLISHABLE_KEY`; o agendamento só vale no branch padrão do GitHub |
+| `.github/workflows/manter-supabase.yml` | Batimento a cada 4 horas (`batimento()`, uma escrita real; o `ping()` a cada 3 dias não impediu a pausa em 11/2026 e um batimento por dia não impediu o aviso de pausa de 23/11/2026) para o projeto Supabase Free não pausar; falha visível sem secrets ou com o projeto pausado; o job `manter-agendamento` reabilita o workflow pela API contra a desativação após 60 dias; secrets `SUPABASE_URL` e `SUPABASE_PUBLISHABLE_KEY`; o agendamento só vale no branch padrão do GitHub |
 | `src/formato.ts` | Formatação BRL, %, datas `dd/mm/aaaa` |
 
 Regras de arquitetura:
