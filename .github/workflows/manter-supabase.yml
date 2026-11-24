@@ -4,7 +4,8 @@ name: Manter o Supabase ativo
 # bastou (pausa em 11/2026), e um batimento por dia também não (novo aviso de pausa em 23/11/2026, com uma única
 # requisição por dia nos logs). A documentação pede "algumas requisições por dia", então o job grava um batimento
 # real no banco (batimento(), uma linha em private.batimento, sem dado do usuário) a cada 4 horas. O GitHub atrasa
-# ou pula execuções agendadas em horários de pico; com seis horários, sobram várias por dia. Sem secrets, ou com o
+# ou pula execuções agendadas (em 24/11/2026 rodou 1 de 3 horários), então a fonte principal agora é a função
+# agendada do Netlify (netlify/functions/batimento.mts), no mesmo horário; este workflow fica como reserva. Sem secrets, ou com o
 # projeto pausado, o job falha e o GitHub avisa por e-mail. Os secrets SUPABASE_URL e SUPABASE_PUBLISHABLE_KEY ficam em Settings → Secrets and variables →
 # Actions. A chave publicável é pública por desenho; nunca use a secret.
 # O GitHub desativa workflows agendados de repositórios sem atividade por 60 dias; o job manter-agendamento
