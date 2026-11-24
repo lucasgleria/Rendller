@@ -63,7 +63,8 @@ O plano Free do Supabase pausa o projeto depois de 7 dias de pouca atividade. Ne
 
 - o app **segue funcionando com os dados locais** e mostra "Nuvem indisponível (o projeto pode estar pausado)"; as alterações são enviadas quando a nuvem voltar;
 - para despausar, restaure o projeto pelo painel do Supabase (ele fica disponível para restauração por até 1 ano);
-- o workflow `.github/workflows/manter-supabase.yml` grava um batimento no banco (`batimento()`) a cada 4 horas para evitar a pausa (uma vez por dia não bastou: o Supabase pede algumas requisições por dia) e fica vermelho se o projeto estiver pausado. Abrir o app com a conta também conta como atividade;
+- a função agendada do Netlify `netlify/functions/batimento.mts` grava um batimento no banco a cada 4 horas (o agendamento do GitHub pula execuções, então ela é a fonte principal). Ela usa as variáveis `VITE_SUPABASE_URL` e `VITE_SUPABASE_PUBLISHABLE_KEY` do Netlify, que precisam valer também para *Functions*;
+- como reserva, o workflow `.github/workflows/manter-supabase.yml` grava um batimento no banco (`batimento()`) a cada 4 horas para evitar a pausa (uma vez por dia não bastou: o Supabase pede algumas requisições por dia) e fica vermelho se o projeto estiver pausado. Abrir o app com a conta também conta como atividade;
 - o GitHub **desativa workflows agendados de repositórios sem atividade por 60 dias**: se isso acontecer, reative-o em *Actions*;
 - o agendamento **só vale a partir do branch padrão do GitHub**. Enquanto o workflow estiver só no branch `feat/conta-e-classes`, ele não roda sozinho.
 
